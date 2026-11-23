@@ -110,3 +110,46 @@ export const snoozeHabit = async (habitId) => {
     throw error;
   }
 };
+
+/**
+ * Alışkanlığı tamamlandı olarak işaretler ve erteleme sayacını sıfırlar.
+ * @param {string} habitId
+ * @returns {Promise<Array>} Güncel liste
+ */
+export const completeHabit = async (habitId) => {
+  try {
+    const habits = await getHabits();
+    const updatedList = habits.map((habit) =>
+      habit.id === habitId
+        ? { ...habit, isCompleted: true, snoozeCount: 0 }
+        : habit
+    );
+    await AsyncStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(updatedList));
+    return updatedList;
+  } catch (error) {
+    console.error('Alışkanlık tamamlanırken hata oluştu:', error);
+    throw error;
+  }
+};
+
+/**
+ * Alışkanlığın durumunu ve erteleme sayacını sıfırlar (tekrar başlatır).
+ * @param {string} habitId
+ * @returns {Promise<Array>} Güncel liste
+ */
+export const resetHabit = async (habitId) => {
+  try {
+    const habits = await getHabits();
+    const updatedList = habits.map((habit) =>
+      habit.id === habitId
+        ? { ...habit, isCompleted: false, snoozeCount: 0 }
+        : habit
+    );
+    await AsyncStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(updatedList));
+    return updatedList;
+  } catch (error) {
+    console.error('Alışkanlık sıfırlanırken hata oluştu:', error);
+    throw error;
+  }
+};
+

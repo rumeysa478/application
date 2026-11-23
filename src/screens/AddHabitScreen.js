@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { saveHabit } from '../services/storage';
+import { scheduleHabitNotification } from '../services/notifications';
 
 const PRESET_INTERVALS = [15, 30, 45, 60, 120, 180];
 const SUGGESTIONS = ['💧 Su İç', '💊 İlaç Al', '🚶 Egzersiz Yap', '📖 Kitap Oku'];
@@ -35,10 +36,18 @@ export default function AddHabitScreen({ navigation }) {
 
     try {
       setIsSubmitting(true);
-      await saveHabit({
+      const newHabit = await saveHabit({
         title: trimmedTitle,
         intervalMinutes: minutes,
       });
+
+      // Hatırlatma bildirimini planla
+      try {
+        await scheduleHabitNotification(newHabit);
+      } catch (notifErr) {
+        console.warn('Bildirim planlanamadı (izin verilmemiş olabilir):', notifErr);
+      }
+
       // Başarıyla kaydedildi, ana ekrana dön
       navigation.goBack();
     } catch (error) {

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,11 +9,38 @@ import {
   Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getHabits, deleteHabit } from '../services/storage';
+import {
+  getHabits,
+  deleteHabit,
+  snoozeHabit,
+  completeHabit,
+  resetHabit,
+} from '../services/storage';
+import {
+  requestNotificationPermissions,
+  scheduleSnoozeNotification,
+  sendInstantNotification,
+} from '../services/notifications';
+import {
+  startPersistentVibration,
+  stopVibration,
+  isVibrationActive,
+} from '../services/vibration';
 
 export default function HomeScreen({ navigation }) {
   const [habits, setHabits] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeAlertHabit, setActiveAlertHabit] = useState(null);
+
+  // Bildirim izinlerini kontrol et
+  useEffect(() => {
+    requestNotificationPermissions();
+
+    // Bileşen unmount olursa titreşimi durdur
+    return () => {
+      stopVibration();
+    };
+  }, []);
 
   // Ekran her odaklandığında listeyi güncelle
   const loadHabits = useCallback(async () => {
@@ -37,6 +64,80 @@ export default function HomeScreen({ navigation }) {
     setRefreshing(false);
   };
 
+  // Erteleme (Snooze) Mantığı (Maksimum 3 kez)
+  const handleSnooze = async (item) => {
+    const currentSnooze = item.snoozeCount || 0;
+
+    if (currentSnooze < 3) {
+      try {
+        // Erteleme sayacını 1 artır ve kaydet
+        const updated = await snoozeHabit(item.id);
+
+        // 30 dakikalık (veya test için zamanlanmış) bildirimi planla
+        const { fact } = await scheduleSnoozeNotification(item, 30);
+
+        await loadHabits();
+
+        const remaining = 3 - (updated ? updated.snoozeCount : currentSnooze + 1);
+
+        Alert.alert(
+          '⏳ 30 Dakika Ertelendi',
+          `Hatırlatma 30 dakika sonraya planlandı.\n\nKalan erteleme hakkınız: ${remaining}/3\n\n💡 Biliyor muydunuz?\n"${fact.fact}"`
+        );
+      } catch (error) {
+        Alert.alert('Hata', 'Erteleme işlemi gerçekleştirilemedi.');
+        console.error(error);
+      }
+    } else {
+      // 3 erteleme hakkı doldu! Zorunlu modu ve titreşimi başlat
+      triggerZorunluMod(item);
+    }
+  };
+
+  // Zorunlu Mod (Titreşimli Alarm) Tetikleyici
+  const triggerZorunluMod = (item) => {
+    setActiveAlertHabit(item);
+    startPersistentVibration();
+
+    Alert.alert(
+      '🚨 ZORUNLU MOD BAŞLATILDI!',
+      `"${item.title}" için 3/3 erteleme hakkınız doldu!\n\nKanıt fotoğrafı çekilene kadar sürekli titreşim uyarısı devam edecektir. Durdurmak için kanıt butonuna basın.`,
+      [
+        {
+          text: '🔕 Titreşimi Sustur / Kanıtla',
+          onPress: () => handleProof(item),
+        },
+      ]
+    );
+  };
+
+  // Kanıtla / Görevi Tamamla Mantığı
+  const handleProof = async (item) => {
+    // Eğer titreşim çalışıyorsa durdur
+    stopVibration();
+    setActiveAlertHabit(null);
+
+    try {
+      // Görevi tamamlandı olarak işaretle ve sayacı sıfırla
+      await completeHabit(item.id);
+      await loadHabits();
+
+      Alert.alert(
+        '🎉 Tebrikler!',
+        `"${item.title}" alışkanlığı başarıyla tamamlandı ve onaylandı! Erteleme haklarınız sıfırlandı.\n\n(Bir sonraki aşamada buraya doğrudan Kamera ile fotoğraf kanıtı doğrulaması eklenecektir.)`
+      );
+    } catch (error) {
+      console.error('Tamamlama hatası:', error);
+    }
+  };
+
+  // Alışkanlığı Tekrar Başlat
+  const handleReset = async (item) => {
+    await resetHabit(item.id);
+    await loadHabits();
+  };
+
+  // Alışkanlık Silme
   const handleDelete = (id, title) => {
     Alert.alert(
       'Alışkanlığı Sil',
@@ -47,6 +148,10 @@ export default function HomeScreen({ navigation }) {
           text: 'Sil',
           style: 'destructive',
           onPress: async () => {
+            if (activeAlertHabit && activeAlertHabit.id === id) {
+              stopVibration();
+              setActiveAlertHabit(null);
+            }
             const updated = await deleteHabit(id);
             setHabits(updated);
           },
@@ -55,12 +160,26 @@ export default function HomeScreen({ navigation }) {
     );
   };
 
+  // Anında Bildirim Testi
+  const handleTestNotification = async () => {
+    try {
+      await sendInstantNotification('Habitime Hatırlatıcısı');
+      Alert.alert(
+        '🔔 Bildirim Gönderildi',
+        'Bildirim merkezini / kilit ekranınızı kontrol edin. Rastgele bir "Biliyor muydunuz?" bilgisi içerir.'
+      );
+    } catch (error) {
+      Alert.alert('Bildirim Hatası', 'Bildirim izni verilmemiş olabilir.');
+    }
+  };
+
   const renderHabitCard = ({ item }) => {
     const maxSnooze = item.maxSnooze || 3;
     const currentSnooze = item.snoozeCount || 0;
     const remainingSnooze = Math.max(0, maxSnooze - currentSnooze);
+    const isAlertActive = activeAlertHabit && activeAlertHabit.id === item.id;
 
-    // Erteleme durumuna göre renk rozeti
+    // Erteleme durumuna göre rozet rengi
     const snoozeBadgeColor =
       remainingSnooze === 0
         ? '#EF4444' // Kırmızı (Hak kalmadı!)
@@ -69,7 +188,7 @@ export default function HomeScreen({ navigation }) {
         : '#10B981'; // Yeşil
 
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, isAlertActive && styles.cardInAlert]}>
         {/* Kart Başlığı ve Silme Butonu */}
         <View style={styles.cardHeader}>
           <View style={styles.titleContainer}>
@@ -92,7 +211,10 @@ export default function HomeScreen({ navigation }) {
           <View
             style={[
               styles.badge,
-              { backgroundColor: snoozeBadgeColor + '20', borderColor: snoozeBadgeColor },
+              {
+                backgroundColor: snoozeBadgeColor + '20',
+                borderColor: snoozeBadgeColor,
+              },
             ]}
           >
             <Text style={[styles.badgeText, { color: snoozeBadgeColor }]}>
@@ -105,42 +227,109 @@ export default function HomeScreen({ navigation }) {
               <Text style={styles.completedBadgeText}>✓ Tamamlandı</Text>
             </View>
           )}
+
+          {isAlertActive && (
+            <View style={[styles.badge, styles.alertBadge]}>
+              <Text style={styles.alertBadgeText}>🚨 ZORUNLU MOD AKTİF</Text>
+            </View>
+          )}
         </View>
 
-        {/* Görsel Aksiyon Butonları (Kamera & Erteleme aşaması için şablon) */}
-        <View style={styles.actionButtonsRow}>
+        {/* Aksiyon Butonları */}
+        {item.isCompleted ? (
           <TouchableOpacity
-            style={[styles.actionButton, styles.kanitlaButton]}
-            activeOpacity={0.7}
-            onPress={() => {
-              Alert.alert(
-                '📸 Kanıt Doğrulama',
-                'Kamera ile kanıt doğrulama özelliği bir sonraki aşamada aktif olacaktır!'
-              );
-            }}
+            style={styles.resetButton}
+            activeOpacity={0.8}
+            onPress={() => handleReset(item)}
           >
-            <Text style={styles.kanitlaButtonText}>📸 Kanıtla</Text>
+            <Text style={styles.resetButtonText}>🔄 Alışkanlığı Tekrar Başlat</Text>
           </TouchableOpacity>
+        ) : (
+          <View style={styles.actionButtonsRow}>
+            {/* Kanıtla / Tamamla Butonu */}
+            <TouchableOpacity
+              style={[
+                styles.actionButton,
+                styles.kanitlaButton,
+                isAlertActive && styles.kanitlaAlertButton,
+              ]}
+              activeOpacity={0.7}
+              onPress={() => handleProof(item)}
+            >
+              <Text style={styles.kanitlaButtonText}>
+                {isAlertActive ? '🔕 Sustur & Kanıtla' : '📸 Kanıtla'}
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.actionButton, styles.erteleButton]}
-            activeOpacity={0.7}
-            onPress={() => {
-              Alert.alert(
-                '⏳ Erteleme (Snooze)',
-                '30 dakikalık erteleme mekanizması bir sonraki aşamada bildirim servisiyle entegre edilecektir!'
-              );
-            }}
-          >
-            <Text style={styles.erteleButtonText}>⏳ Ertele (30 dk)</Text>
-          </TouchableOpacity>
-        </View>
+            {/* Ertele Butonu */}
+            <TouchableOpacity
+              style={[
+                styles.actionButton,
+                remainingSnooze === 0
+                  ? styles.erteleDisabledButton
+                  : styles.erteleButton,
+              ]}
+              activeOpacity={0.7}
+              onPress={() => handleSnooze(item)}
+            >
+              <Text
+                style={[
+                  styles.erteleButtonText,
+                  remainingSnooze === 0 && styles.erteleDisabledButtonText,
+                ]}
+              >
+                {remainingSnooze === 0 ? '🚨 Hak Bitti' : '⏳ Ertele (30 dk)'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   };
 
   return (
     <View style={styles.container}>
+      {/* Aktif Titreşim / Zorunlu Mod Üst Bildirim Şeridi */}
+      {activeAlertHabit && (
+        <View style={styles.alertBanner}>
+          <View style={styles.alertBannerContent}>
+            <Text style={styles.alertBannerTitle}>
+              🚨 ZORUNLU MOD: Titreşim Aktif!
+            </Text>
+            <Text style={styles.alertBannerSubtitle}>
+              "{activeAlertHabit.title}" için 3 erteleme bitti. Susturmak için kanıtlayın.
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.alertBannerButton}
+            onPress={() => handleProof(activeAlertHabit)}
+          >
+            <Text style={styles.alertBannerButtonText}>Sustur</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Test ve Hızlı Eylem Çubuğu */}
+      <View style={styles.quickBar}>
+        <TouchableOpacity
+          style={styles.quickButton}
+          onPress={handleTestNotification}
+        >
+          <Text style={styles.quickButtonText}>🔔 Test Bildirimi Gönder</Text>
+        </TouchableOpacity>
+
+        {habits.length > 0 && !activeAlertHabit && (
+          <TouchableOpacity
+            style={[styles.quickButton, styles.quickButtonDanger]}
+            onPress={() => triggerZorunluMod(habits[0])}
+          >
+            <Text style={[styles.quickButtonText, styles.quickButtonDangerText]}>
+              🚨 Alarmı Test Et
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       {/* Alışkanlık Listesi */}
       <FlatList
         data={habits}
@@ -148,7 +337,11 @@ export default function HomeScreen({ navigation }) {
         renderItem={renderHabitCard}
         contentContainerStyle={styles.listContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#4F46E5']} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#4F46E5']}
+          />
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
@@ -178,6 +371,73 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
+  alertBanner: {
+    backgroundColor: '#EF4444',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  alertBannerContent: {
+    flex: 1,
+    marginRight: 10,
+  },
+  alertBannerTitle: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  alertBannerSubtitle: {
+    color: '#FEE2E2',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  alertBannerButton: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  alertBannerButtonText: {
+    color: '#EF4444',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  quickBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+    gap: 8,
+  },
+  quickButton: {
+    flex: 1,
+    backgroundColor: '#EEF2FF',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  quickButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4338CA',
+  },
+  quickButtonDanger: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  quickButtonDangerText: {
+    color: '#B91C1C',
+  },
   listContent: {
     padding: 16,
     paddingBottom: 96,
@@ -194,6 +454,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
+  },
+  cardInAlert: {
+    borderColor: '#EF4444',
+    borderWidth: 2,
+    backgroundColor: '#FFF5F5',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -247,19 +512,31 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  alertBadge: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#EF4444',
+  },
+  alertBadgeText: {
+    color: '#DC2626',
+    fontSize: 12,
+    fontWeight: '800',
+  },
   actionButtonsRow: {
     flexDirection: 'row',
     gap: 10,
   },
   actionButton: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 11,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   kanitlaButton: {
     backgroundColor: '#4F46E5',
+  },
+  kanitlaAlertButton: {
+    backgroundColor: '#DC2626',
   },
   kanitlaButtonText: {
     color: '#FFFFFF',
@@ -274,6 +551,28 @@ const styles = StyleSheet.create({
   erteleButtonText: {
     color: '#334155',
     fontSize: 14,
+    fontWeight: '600',
+  },
+  erteleDisabledButton: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  erteleDisabledButtonText: {
+    color: '#B91C1C',
+    fontWeight: '700',
+  },
+  resetButton: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  resetButtonText: {
+    color: '#475569',
+    fontSize: 13,
     fontWeight: '600',
   },
   emptyContainer: {
