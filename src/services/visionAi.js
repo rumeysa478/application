@@ -3,15 +3,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const API_KEY_STORAGE_KEY = '@habitime_gemini_api_key';
 const CACHED_MODEL_KEY = '@habitime_gemini_model';
 
+// Hedef model: gemini-2.5-flash (tüm sistemde tek ve kararlı model)
+export const TARGET_MODEL = 'gemini-2.5-flash';
+
 // Ortam değişkeninden veya varsayılan anahtar
 export const DEFAULT_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
-
-// Aday model listesi (Öncelik sırasına göre)
-const FALLBACK_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-];
 
 /**
  * Kayıtlı Gemini API anahtarını getirir.
@@ -28,13 +24,14 @@ export const getStoredApiKey = async () => {
 
 /**
  * Yeni bir Gemini API anahtarı kaydeder.
+ * Eski model önbelleğini temizler ve hedef modeli gemini-2.5-flash olarak ayarlar.
  * @param {string} apiKey
  */
 export const setStoredApiKey = async (apiKey) => {
   try {
     if (apiKey) {
       await AsyncStorage.setItem(API_KEY_STORAGE_KEY, apiKey.trim());
-      await AsyncStorage.removeItem(CACHED_MODEL_KEY);
+      await AsyncStorage.setItem(CACHED_MODEL_KEY, TARGET_MODEL);
     } else {
       await AsyncStorage.removeItem(API_KEY_STORAGE_KEY);
       await AsyncStorage.removeItem(CACHED_MODEL_KEY);
@@ -45,8 +42,9 @@ export const setStoredApiKey = async (apiKey) => {
 };
 
 /**
- * Girilen API anahtarının geçerliliğini ve kullanılabilecek modelleri test eder.
- * API anahtarı URL path'inde DEĞİL, 'x-goog-api-key' header'ı ile gönderilir.
+ * Girilen API anahtarının geçerliliğini test eder.
+ * API anahtarı URL path/query'sine DEĞİL, 'x-goog-api-key' header'ı ile gönderilir.
+ * Başarılı olursa modeli TARGET_MODEL (gemini-2.5-flash) olarak onaylar.
  * @param {string} apiKey
  * @returns {Promise<{ success: boolean, model?: string, error?: string }>}
  */
@@ -67,68 +65,53 @@ export const testApiKey = async (apiKey) => {
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error('API Anahtarı test hatası (HTTP ' + res.status + '):', errText);
+      console.error(`API Anahtarı test hatası [Model: ${TARGET_MODEL}] (HTTP ${res.status}):`, errText);
       let msg = `HTTP ${res.status}`;
       try {
         const parsed = JSON.parse(errText);
         msg = parsed?.error?.message || msg;
       } catch {}
-      return { success: false, error: msg };
+      return { success: false, error: `[Model: ${TARGET_MODEL}] ${msg}` };
     }
 
-    const data = await res.json();
-    if (Array.isArray(data.models)) {
-      const supported = data.models.filter(
-        (m) =>
-          Array.isArray(m.supportedGenerationMethods) &&
-          m.supportedGenerationMethods.includes('generateContent')
-      );
-
-      const preferred =
-        supported.find((m) => m.name.includes('2.5-flash')) ||
-        supported.find((m) => m.name.includes('2.0-flash')) ||
-        supported.find((m) => m.name.includes('1.5-flash')) ||
-        supported[0];
-
-      const chosen = preferred ? preferred.name.replace(/^models\//, '') : 'gemini-2.5-flash';
-      await AsyncStorage.setItem(CACHED_MODEL_KEY, chosen);
-      return { success: true, model: chosen };
-    }
-
-    return { success: true, model: 'gemini-2.5-flash' };
+    // Başarılı olduğunda daima gemini-2.5-flash kaydet
+    await AsyncStorage.setItem(CACHED_MODEL_KEY, TARGET_MODEL);
+    return { success: true, model: TARGET_MODEL };
   } catch (e) {
-    console.error('testApiKey istisnası:', e);
-    return { success: false, error: e.message || 'Ağ bağlantı hatası.' };
+    console.error(`testApiKey istisnası [Model: ${TARGET_MODEL}]:`, e);
+    return { success: false, error: `[Model: ${TARGET_MODEL}] ${e.message || 'Ağ bağlantı hatası.'}` };
   }
 };
 
 /**
- * Bu API anahtarı için çalışan en uygun modeli tespit eder.
+ * Aktif modeli döndürür. Eski model (özellikle gemini-1.5-flash) kayıtlıysa
+ * otomatik olarak temizleyip gemini-2.5-flash olarak günceller.
  */
-const resolveActiveModel = async (apiKey) => {
+export const resolveActiveModel = async () => {
   try {
     const cached = await AsyncStorage.getItem(CACHED_MODEL_KEY);
-    if (cached) return cached;
-
-    const testRes = await testApiKey(apiKey);
-    if (testRes.success && testRes.model) {
-      return testRes.model;
+    if (cached !== TARGET_MODEL) {
+      console.log(`Eski model önbelleği (${cached}) tespit edildi, ${TARGET_MODEL} olarak güncelleniyor.`);
+      await AsyncStorage.setItem(CACHED_MODEL_KEY, TARGET_MODEL);
     }
-  } catch {}
-
-  return FALLBACK_MODELS[0];
+  } catch (err) {
+    console.warn('Model önbellek kontrol hatası:', err);
+  }
+  return TARGET_MODEL;
 };
 
 /**
  * Çekilen fotoğrafta su bardağı, şişe, matara veya içecek kabı olup olmadığını
- * Gemini Vision API ile analiz eder.
+ * Gemini Vision API (gemini-2.5-flash) ile analiz eder.
  *
- * 1. API anahtarı URL path veya query'sine konulmaz; 'x-goog-api-key' header'ı kullanılır.
+ * 1. API anahtarı URL path/query'sine konulmaz; 'x-goog-api-key' başlığı kullanılır.
  * 2. 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
  *    uç noktasına POST isteği atılır.
  * 3. İstek gövdesinde 'inline_data: { mime_type: "image/jpeg", data: base64String }' gönderilir.
- * 4. Model yanıtı '{"isValidContainer": boolean, "reason": string}' JSON formatında döner.
- * 5. response.ok değilse hata gövdesi konsola loglanır ve anlaşılır mesaj gösterilir.
+ * 4. Model yanıtı '{"isValidContainer": boolean, "reason": string}' JSON formatında döner;
+ *    JSON dönmezse metindeki olumlu/olumsuz ifadeler güvenli fallback ile ayrıştırılır.
+ * 5. response.ok değilse hata gövdesi loglanır ve kullanıcıya '[Model: gemini-2.5-flash]' içeren
+ *    anlaşılır mesaj gösterilir.
  *
  * @param {string} base64Image - Fotoğrafın Base64 verisi
  * @returns {Promise<{
@@ -151,7 +134,7 @@ export const analyzeImageForWaterContainer = async (base64Image) => {
       containsWaterContainer: false,
       isApiKeyMissing: true,
       message:
-        'Yapay zekâ API anahtarı girilmedi. Lütfen bir Gemini API anahtarı girin veya manuel doğrulama ile devam edin.',
+        `Yapay zekâ API anahtarı girilmedi [Model: ${TARGET_MODEL}]. Lütfen bir Gemini API anahtarı girin veya manuel doğrulama ile devam edin.`,
     };
   }
 
@@ -165,14 +148,17 @@ export const analyzeImageForWaterContainer = async (base64Image) => {
       success: false,
       containsWaterContainer: false,
       isNetworkError: true,
-      message: 'Fotoğraf verisi (base64) okunamadı. Lütfen tekrar deneyin.',
+      message: `Fotoğraf verisi (base64) okunamadı [Model: ${TARGET_MODEL}]. Lütfen tekrar deneyin.`,
     };
   }
 
-  // Kullanıcı kuralına uygun prompt: {"isValidContainer": boolean, "reason": string}
+  // AsyncStorage içindeki eski model kalıntılarını temizle ve hedef modeli garantile
+  await resolveActiveModel();
+
+  // İstek gövdesi: inline_data ile görüntüyü gönder
   const promptText = `Görseli incele. Bu fotoğrafta bir su şişesi, su bardağı, matara, termos, kupa, sürahi veya herhangi bir su/içecek kabı var mı?
-SADECE aşağıdaki JSON formatında yanıt ver, markdown backtick (\\\`\\\`\\\`json) veya ek açıklama koyma:
-{"isValidContainer": true, "reason": "Fotoğrafta su bardağı tespit edildi"}
+SADECE aşağıdaki JSON formatında yanıt ver, markdown backtick (\`\`\`json) veya ek açıklama yazma:
+{"isValidContainer": true, "reason": "Fotoğrafta su bardağı/şişesi tespit edildi"}
 veya içecek kabı yoksa:
 {"isValidContainer": false, "reason": "Karede su kabı veya içecek kabı tespit edilemedi"}`;
 
@@ -196,108 +182,110 @@ veya içecek kabı yoksa:
     },
   };
 
-  // Birincil olarak gemini-2.5-flash, 404 durumunda yedek modeller
-  const activeModel = await resolveActiveModel(apiKey);
-  const modelsToTry = [
-    activeModel,
-    ...FALLBACK_MODELS.filter((m) => m !== activeModel),
-  ];
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${TARGET_MODEL}:generateContent`;
 
-  let lastErrorDetail = '';
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(requestBody),
+    });
 
-  for (const model of modelsToTry) {
-    // API anahtarı URL path veya query'sine konulmaz; saf endpoint kullanılır
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`Gemini Vision API Hatası [Model: ${TARGET_MODEL}, HTTP ${response.status}]:`, errorBody);
 
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.error(`Gemini Vision API Hatası [Model: ${model}, HTTP ${response.status}]:`, errorBody);
-
-        let parsedMsg = `HTTP ${response.status}`;
-        try {
-          const errJson = JSON.parse(errorBody);
-          parsedMsg = errJson?.error?.message || parsedMsg;
-        } catch {}
-
-        lastErrorDetail = `${model}: ${parsedMsg}`;
-
-        // 404 ise bir sonraki aday modeli dene
-        if (response.status === 404) {
-          console.warn(`Model ${model} 404 döndürdü, bir sonraki aday model deneniyor...`);
-          continue;
-        }
-
-        // 400, 401, 403 vb. ise kullanıcıya hata bildir
-        return {
-          success: false,
-          containsWaterContainer: false,
-          isNetworkError: true,
-          message: `Gemini API Hatası (${parsedMsg}). Lütfen API anahtarınızı veya izinlerinizi kontrol edin.`,
-        };
-      }
-
-      // Başarılı yanıt! Bu modeli hafızaya al
-      await AsyncStorage.setItem(CACHED_MODEL_KEY, model);
-
-      const data = await response.json();
-      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-      // Markdown etiketlerini temizle
-      const cleanJson = rawText
-        .replace(/```json/gi, '')
-        .replace(/```/g, '')
-        .trim();
-
-      let parsed = null;
+      let parsedMsg = `HTTP ${response.status}`;
       try {
-        parsed = JSON.parse(cleanJson);
-      } catch (jsonErr) {
-        console.warn('JSON doğrudan ayrıştırılamadı, metin kontrol ediliyor:', rawText);
-        const lower = rawText.toLowerCase();
-        const isValid =
-          lower.includes('"isvalidcontainer": true') ||
-          lower.includes('"isvalidcontainer":true') ||
-          lower.includes('isvalidcontainer: true');
-        parsed = {
-          isValidContainer: isValid,
-          reason: rawText.slice(0, 120),
-        };
-      }
-
-      const isValid = Boolean(parsed?.isValidContainer ?? parsed?.containsWaterContainer);
-      const reason =
-        parsed?.reason ||
-        parsed?.message ||
-        (isValid ? 'Su kabı tespit edildi' : 'Su kabı tespit edilemedi');
+        const errJson = JSON.parse(errorBody);
+        parsedMsg = errJson?.error?.message || parsedMsg;
+      } catch {}
 
       return {
-        success: true,
-        containsWaterContainer: isValid,
-        detectedObject: reason,
-        reason: reason,
-        message: reason,
+        success: false,
+        containsWaterContainer: false,
+        isNetworkError: true,
+        message: `Gemini API Hatası [Model: ${TARGET_MODEL}] (${parsedMsg}). Lütfen API anahtarınızı veya izinlerinizi kontrol edin.`,
       };
-    } catch (netErr) {
-      console.error(`Model ${model} ağ çağrısı istisnası:`, netErr);
-      lastErrorDetail = netErr.message || 'Ağ bağlantı hatası';
     }
-  }
 
-  // Modellerin tümü başarısız olduysa
-  return {
-    success: false,
-    containsWaterContainer: false,
-    isNetworkError: true,
-    message: `Gemini Vision API bağlantısı sağlanamadı (${lastErrorDetail}). Lütfen API anahtarınızı ve internet bağlantınızı kontrol edin.`,
-  };
+    const data = await response.json();
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    // Markdown ```json bloklarını temizle
+    const cleanJson = rawText
+      .replace(/```json/gi, '')
+      .replace(/```/g, '')
+      .trim();
+
+    // 1. JSON olarak ayrıştırmayı dene
+    let parsed = null;
+    try {
+      parsed = JSON.parse(cleanJson);
+    } catch (jsonErr) {
+      // Regex ile JSON blok bulma
+      const jsonMatch = rawText.match(/\{[\s\S]*"isValidContainer"[\s\S]*\}/i);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch {}
+      }
+    }
+
+    // 2. Güvenli Olumlu/Olumsuz Ayrıştırma (JSON dönmezse metin analizi fallback)
+    let isValid = false;
+    let reason = '';
+
+    if (parsed && typeof parsed.isValidContainer === 'boolean') {
+      isValid = parsed.isValidContainer;
+      reason = parsed.reason || (isValid ? 'Su kabı tespit edildi' : 'Su kabı tespit edilemedi');
+    } else {
+      console.warn(`[Model: ${TARGET_MODEL}] JSON ayrıştırılamadı, metin analizi fallback çalıştırılıyor:`, rawText);
+      const lower = rawText.toLowerCase();
+
+      if (lower.includes('"isvalidcontainer": true') || lower.includes('"isvalidcontainer":true')) {
+        isValid = true;
+        reason = 'Fotoğrafta su kabı tespit edildi.';
+      } else if (lower.includes('"isvalidcontainer": false') || lower.includes('"isvalidcontainer":false')) {
+        isValid = false;
+        reason = 'Karede su kabı tespit edilemedi.';
+      } else {
+        const positiveWords = ['su bardağı', 'su şişesi', 'matara', 'termos', 'kupa', 'bardak', 'şişe', 'tespit edildi', 'evet', 'true'];
+        const negativeWords = ['tespit edilemedi', 'bulunamadı', 'yok', 'hayır', 'false'];
+
+        const hasPositive = positiveWords.some((w) => lower.includes(w));
+        const hasNegative = negativeWords.some((w) => lower.includes(w));
+
+        if (hasNegative && !lower.includes('tespit edildi')) {
+          isValid = false;
+          reason = 'Karede su kabı tespit edilemedi.';
+        } else if (hasPositive) {
+          isValid = true;
+          reason = 'Fotoğrafta su kabı başarıyla tespit edildi.';
+        } else {
+          isValid = false;
+          reason = 'Görüntüde net bir su kabı doğrulanamadı.';
+        }
+      }
+    }
+
+    return {
+      success: true,
+      containsWaterContainer: isValid,
+      detectedObject: reason,
+      reason: reason,
+      message: reason,
+    };
+  } catch (netErr) {
+    console.error(`Gemini Vision API [Model: ${TARGET_MODEL}] ağ çağrısı istisnası:`, netErr);
+    return {
+      success: false,
+      containsWaterContainer: false,
+      isNetworkError: true,
+      message: `Gemini Vision API bağlantısı sağlanamadı [Model: ${TARGET_MODEL}] (${netErr.message || 'Ağ bağlantı hatası'}). Lütfen internetinizi ve API anahtarınızı kontrol edin.`,
+    };
+  }
 };

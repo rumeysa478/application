@@ -18,7 +18,7 @@ Erteleme mekanizması sınırlandırılmış olup, süre dolduğunda kullanıcı
 
 ## ✨ Temel Özellikler
 
-- 🤖 **Vision AI ile Su Kabı Doğrulaması:** Fotoğraf çekildiğinde rastgele bir görüntü kabul edilmez; yapay zekâ (Google Gemini Vision API: 2.0-flash, 2.5-flash, 1.5-flash modelleri dinamik keşifli) karede su bardağı, şişe veya matara olup olmadığını analiz eder. Yalnızca geçerli kanıtlar onaylanır.
+- 🤖 **Vision AI ile Su Kabı Doğrulaması:** Fotoğraf çekildiğinde rastgele bir görüntü kabul edilmez; yapay zekâ (Google Gemini Vision API: `gemini-2.5-flash`) karede su bardağı, şişe veya matara olup olmadığını analiz eder. Yalnızca geçerli kanıtlar onaylanır.
 - 🔒 **Gizlilik Odaklı Geçici Veri Temizliği:** Kanıt fotoğrafları cihazda veya sunucuda kalıcı olarak depolanmaz; doğrulama sonrası fotoğraf verisi bellekten temizlenir, yalnızca zaman damgası ve tüketim miktarı kaydedilir.
 - 👤 **Profil & Bilimsel Su Hedefi Hesaplama:** İsteğe bağlı Yaş, Boy ve Kilo verileri girildiğinde EFSA / WHO / NASEM rehberlerine (~33 ml/kg) dayalı günlük önerilen su litresi otomatik hesaplanır; kullanıcı dilerse manuel düzenleyebilir.
 - ⏰ **Standart Alarm Saat/Dakika Seçici (`TimePickerModal`):** Haftanın 7 günü için çalışma ve uyku saatleri alarm kurar gibi interaktif saat/dakika seçici tekerleğiyle ayarlanabilir.
