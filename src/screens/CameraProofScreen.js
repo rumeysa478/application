@@ -19,6 +19,7 @@ import {
   analyzeImageForWaterContainer,
   getStoredApiKey,
   setStoredApiKey,
+  testApiKey,
 } from '../services/visionAi';
 
 export default function CameraProofScreen({ route, navigation }) {
@@ -34,6 +35,7 @@ export default function CameraProofScreen({ route, navigation }) {
   // API Anahtarı Modal Durumu
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [inputApiKey, setInputApiKey] = useState('');
+  const [isTestingKey, setIsTestingKey] = useState(false);
 
   const cameraRef = useRef(null);
 
@@ -46,11 +48,31 @@ export default function CameraProofScreen({ route, navigation }) {
     };
   }, []);
 
+  // API Anahtarını Test Et
+  const handleTestKey = async () => {
+    setIsTestingKey(true);
+    const result = await testApiKey(inputApiKey);
+    setIsTestingKey(false);
+    if (result.success) {
+      Alert.alert(
+        '✓ Bağlantı Başarılı',
+        `API anahtarı doğrulandı!\nAktif Kullanılacak Model: ${result.model}`
+      );
+    } else {
+      Alert.alert('Bağlantı Hatası', result.error || 'API anahtarı geçersiz.');
+    }
+  };
+
   // API Anahtarını Kaydet
   const handleSaveApiKey = async () => {
     await setStoredApiKey(inputApiKey);
+    const result = await testApiKey(inputApiKey);
     setShowApiKeyModal(false);
-    Alert.alert('Başarılı', 'Gemini API Anahtarı kaydedildi!');
+    if (result.success) {
+      Alert.alert('Kaydedildi', `API Anahtarı kaydedildi ve model bağlandı (${result.model})!`);
+    } else {
+      Alert.alert('Kaydedildi', 'API Anahtarı kaydedildi.');
+    }
   };
 
   // İzin yükleniyorsa
@@ -409,10 +431,22 @@ export default function CameraProofScreen({ route, navigation }) {
 
             <View style={styles.modalActions}>
               <TouchableOpacity
+                style={styles.modalTestBtn}
+                onPress={handleTestKey}
+                disabled={isTestingKey}
+              >
+                {isTestingKey ? (
+                  <ActivityIndicator size="small" color="#4F46E5" />
+                ) : (
+                  <Text style={styles.modalTestText}>⚡ Test Et</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 style={styles.modalCancelBtn}
                 onPress={() => setShowApiKeyModal(false)}
               >
-                <Text style={styles.modalCancelText}>Vazgeç</Text>
+                <Text style={styles.modalCancelText}>Kapat</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.modalSaveBtn}
@@ -762,7 +796,21 @@ const styles = StyleSheet.create({
   modalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: 10,
+    alignItems: 'center',
+    gap: 8,
+  },
+  modalTestBtn: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  modalTestText: {
+    color: '#4F46E5',
+    fontWeight: '700',
+    fontSize: 13,
   },
   modalCancelBtn: {
     paddingVertical: 10,
