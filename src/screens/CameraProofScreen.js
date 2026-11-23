@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system/legacy';
 import { recordWaterIntakeProof } from '../services/storage';
 import { stopVibration } from '../services/vibration';
 import { addProofScore } from '../services/userService';
@@ -142,14 +143,38 @@ export default function CameraProofScreen({ route, navigation }) {
     try {
       setIsProcessing(true);
       if (cameraRef.current) {
+        // quality: 0.5 ve base64: true ile çekim yap
         const captured = await cameraRef.current.takePictureAsync({
           quality: 0.5,
           base64: true,
-          skipProcessing: false,
+        });
+
+        console.log('takePictureAsync sonucu:', {
+          uri: captured?.uri,
+          hasBase64: Boolean(captured?.base64),
+          base64Len: captured?.base64 ? captured.base64.length : 0,
         });
 
         if (captured && captured.uri) {
-          setPhoto(captured);
+          let base64String = captured.base64;
+
+          // photo.base64 boş gelirse expo-file-system üzerinden fallback ile oku
+          if (!base64String) {
+            try {
+              console.log('photo.base64 boş geldi, expo-file-system ile okunuyor...');
+              base64String = await FileSystem.readAsStringAsync(captured.uri, {
+                encoding: FileSystem.EncodingType.Base64,
+              });
+              console.log('expo-file-system fallback başarılı, base64 boyutu:', base64String?.length);
+            } catch (fsErr) {
+              console.warn('expo-file-system fallback okuma hatası:', fsErr);
+            }
+          }
+
+          setPhoto({
+            uri: captured.uri,
+            base64: base64String,
+          });
           return;
         }
       }
@@ -185,15 +210,29 @@ export default function CameraProofScreen({ route, navigation }) {
     try {
       setIsAnalyzing(true);
 
+      // Doğrulama öncesi base64 kontrolü; boşsa ve uri varsa FileSystem ile tekrar oku
+      let base64ToUse = photo?.base64;
+      if (!base64ToUse && photo?.uri && photo.uri.startsWith('file:')) {
+        try {
+          console.log('Doğrulama öncesi base64 eksik, expo-file-system ile okunuyor...');
+          base64ToUse = await FileSystem.readAsStringAsync(photo.uri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          setPhoto((prev) => ({ ...prev, base64: base64ToUse }));
+        } catch (readErr) {
+          console.warn('Doğrulama öncesi base64 okunamadı:', readErr);
+        }
+      }
+
       // Base64 verisi varsa Gemini Vision API ile incele
-      if (photo?.base64) {
-        const aiResult = await analyzeImageForWaterContainer(photo.base64);
+      if (base64ToUse) {
+        const aiResult = await analyzeImageForWaterContainer(base64ToUse);
 
         // 1. Durum: Yapay zekâ nesneyi doğrulamadı (Su kabı yok)
         if (!aiResult.containsWaterContainer && !aiResult.isApiKeyMissing && !aiResult.isNetworkError) {
           Alert.alert(
             '❌ Su Kabı Doğrulanamadı',
-            `Yapay zekâ karede bir su bardağı, su şişesi veya matara tespit edemedi.\n(Tespit: ${aiResult.detectedObject || 'Yok'})\n\nLütfen su kabınızı net gösterecek şekilde kadraja alın ve tekrar çekin.`,
+            `Yapay zekâ fotoğrafta bir su bardağı, su şişesi veya matara tespit edemedi.\n\nAçıklama: ${aiResult.reason || aiResult.message || 'Yok'}\n\nLütfen su kabınızı net gösterecek şekilde kadraja alın ve tekrar çekin.`,
             [
               {
                 text: 'Tekrar Fotoğraf Çek',
@@ -208,7 +247,7 @@ export default function CameraProofScreen({ route, navigation }) {
         // 2. Durum: API anahtarı girilmemiş veya ağ hatası (Graceful Fallback)
         if (aiResult.isApiKeyMissing || aiResult.isNetworkError) {
           Alert.alert(
-            '⚠️ Yapay Zekâ Doğrulaması',
+            '⚠️ Yapay Zekâ Uyarısı',
             `${aiResult.message}\n\nKanıtınızı bu seferlik manuel olarak onaylamak ister misiniz?`,
             [
               {
@@ -223,7 +262,7 @@ export default function CameraProofScreen({ route, navigation }) {
               {
                 text: 'Manuel Onayla',
                 onPress: async () => {
-                  await finalizeIntake(portionLiters);
+                  await finalizeIntake(portionLiters, 'Manuel Doğrulama');
                 },
               },
             ]
@@ -234,7 +273,7 @@ export default function CameraProofScreen({ route, navigation }) {
 
         // 3. Durum: Yapay zekâ su kabını başarıyla doğruladı!
         if (aiResult.containsWaterContainer) {
-          await finalizeIntake(portionLiters, aiResult.detectedObject);
+          await finalizeIntake(portionLiters, aiResult.reason || aiResult.detectedObject);
           return;
         }
       } else {
@@ -248,7 +287,7 @@ export default function CameraProofScreen({ route, navigation }) {
         'Analiz sırasında bir sorun oluştu. Manuel olarak onaylamak ister misiniz?',
         [
           { text: 'Tekrar Çek', onPress: () => setPhoto(null) },
-          { text: 'Manuel Onayla', onPress: () => finalizeIntake(portionLiters) },
+          { text: 'Manuel Onayla', onPress: () => finalizeIntake(portionLiters, 'Manuel Onay') },
         ]
       );
     } finally {
@@ -322,7 +361,11 @@ export default function CameraProofScreen({ route, navigation }) {
       {photo ? (
         // Fotoğraf Çekildikten Sonraki Önizleme ve Doğrulama
         <View style={styles.previewContainer}>
-          <Image source={{ uri: photo.uri }} style={styles.previewImage} />
+          <Image
+            source={{ uri: photo.uri }}
+            style={styles.previewImage}
+            resizeMode="contain"
+          />
 
           <SafeAreaView style={styles.previewOverlay} edges={['top', 'bottom']}>
             <View style={styles.previewHeader}>
@@ -741,14 +784,23 @@ const styles = StyleSheet.create({
   },
   previewContainer: {
     flex: 1,
+    width: '100%',
+    height: '100%',
     backgroundColor: '#000000',
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   previewImage: {
-    ...StyleSheet.absoluteFillObject,
-    resizeMode: 'cover',
+    width: '100%',
+    height: '100%',
   },
   previewOverlay: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'space-between',
     paddingHorizontal: 20,
   },
