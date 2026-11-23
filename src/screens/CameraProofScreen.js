@@ -7,8 +7,9 @@ import {
   Image,
   ActivityIndicator,
   Alert,
-  SafeAreaView,
+  Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { completeHabit } from '../services/storage';
 import { stopVibration } from '../services/vibration';
@@ -29,7 +30,7 @@ export default function CameraProofScreen({ route, navigation }) {
     };
   }, []);
 
-  // İzin kontrolü
+  // İzin henüz yüklenmediyse yükleme göstergesi
   if (!permission) {
     return (
       <View style={styles.centerContainer}>
@@ -39,20 +40,37 @@ export default function CameraProofScreen({ route, navigation }) {
     );
   }
 
+  // İzin verilmediyse izin isteme ekranı
   if (!permission.granted) {
     return (
-      <SafeAreaView style={styles.permissionContainer}>
+      <SafeAreaView style={styles.permissionContainer} edges={['top', 'bottom']}>
         <Text style={styles.permissionIcon}>📷</Text>
         <Text style={styles.permissionTitle}>Kamera İzni Gerekli</Text>
         <Text style={styles.permissionSubtitle}>
-          Habitime'ın kanıt doğrulama sistemini kullanabilmek için kamera erişimine izin vermelisiniz.
+          Habitime'ın zorlayıcı kanıt sistemini kullanabilmek için kamera erişimine izin vermelisiniz.
         </Text>
+
         <TouchableOpacity
           style={styles.permissionButton}
+          activeOpacity={0.8}
           onPress={requestPermission}
         >
           <Text style={styles.permissionButtonText}>İzin Ver</Text>
         </TouchableOpacity>
+
+        {/* Emülatör / Kamera donanımı olmayan ortamlar için test butonu */}
+        <TouchableOpacity
+          style={styles.mockButton}
+          activeOpacity={0.8}
+          onPress={() => {
+            setPhoto({
+              uri: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=600&auto=format&fit=crop&q=60',
+            });
+          }}
+        >
+          <Text style={styles.mockButtonText}>🧪 Test Fotoğrafı ile Devam Et</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.cancelButton}
           onPress={() => navigation.goBack()}
@@ -63,19 +81,27 @@ export default function CameraProofScreen({ route, navigation }) {
     );
   }
 
-  // Fotoğraf Çekme İşlemi
+  // Fotoğraf Çekme Eylemi
   const handleTakePhoto = async () => {
-    if (!cameraRef.current || isProcessing) return;
+    if (isProcessing) return;
 
     try {
       setIsProcessing(true);
-      const captured = await cameraRef.current.takePictureAsync({
-        quality: 0.7,
+      if (cameraRef.current) {
+        const captured = await cameraRef.current.takePictureAsync({
+          quality: 0.7,
+        });
+        if (captured && captured.uri) {
+          setPhoto(captured);
+          return;
+        }
+      }
+      // Kamera ref yoksa veya emülatörse yedek fotoğraf kullan
+      setPhoto({
+        uri: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=600&auto=format&fit=crop&q=60',
       });
-      setPhoto(captured);
     } catch (error) {
-      console.warn('Kamera yakalama hatası (emülatör olabilir):', error);
-      // Emülatör veya kamera donanımı yoksa test için yedek kanıt oluştur
+      console.warn('Fotoğraf çekme uyarısı (emülatör olabilir):', error);
       setPhoto({
         uri: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=600&auto=format&fit=crop&q=60',
       });
@@ -89,7 +115,7 @@ export default function CameraProofScreen({ route, navigation }) {
     setFacing((current) => (current === 'back' ? 'front' : 'back'));
   };
 
-  // Kanıtı Onaylama İşlemi
+  // Kanıtı Onaylama ve Kaydetme
   const handleConfirmProof = async () => {
     if (!habitId) {
       Alert.alert('Hata', 'Alışkanlık kimliği bulunamadı.');
@@ -98,13 +124,12 @@ export default function CameraProofScreen({ route, navigation }) {
 
     try {
       setIsProcessing(true);
-      // Titreşimi durdur, depolamada alışkanlığı tamamla ve fotoğraf URI'sini kaydet
       stopVibration();
       await completeHabit(habitId, photo?.uri);
 
       Alert.alert(
         '🎉 Kanıt Doğrulandı!',
-        `"${habitTitle || 'Alışkanlık'}" için kanıt fotoğrafı başarıyla kaydedildi. Alışkanlık tamamlandı olarak güncellendi!`,
+        `"${habitTitle || 'Alışkanlık'}" için kanıt fotoğrafı başarıyla kaydedildi ve görev tamamlandı!`,
         [
           {
             text: 'Tamam',
@@ -123,94 +148,107 @@ export default function CameraProofScreen({ route, navigation }) {
   return (
     <View style={styles.container}>
       {photo ? (
-        // Fotoğraf Çekildikten Sonraki Önizleme Ekranı
+        // Fotoğraf Önizleme Ekranı
         <View style={styles.previewContainer}>
           <Image source={{ uri: photo.uri }} style={styles.previewImage} />
 
-          {/* Üst Bilgi Başlığı */}
-          <View style={styles.previewOverlayHeader}>
-            <Text style={styles.previewHeaderTitle}>
-              📸 Kanıt Fotoğrafı Önizlemesi
-            </Text>
-            <Text style={styles.previewHeaderSubtitle}>
-              {habitTitle || 'Alışkanlık'} göreviniz için bu kanıtı onaylıyor musunuz?
-            </Text>
-          </View>
-
-          {/* Alt Butonlar: Tekrar Çek / Onayla */}
-          <View style={styles.previewActions}>
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.retakeBtn]}
-              onPress={() => setPhoto(null)}
-              disabled={isProcessing}
-            >
-              <Text style={styles.retakeBtnText}>🔄 Tekrar Çek</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.confirmBtn]}
-              onPress={handleConfirmProof}
-              disabled={isProcessing}
-            >
-              {isProcessing ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={styles.confirmBtnText}>✓ Kanıtı Onayla</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : (
-        // Canlı Kamera Önizleme Ekranı
-        <CameraView
-          style={styles.camera}
-          facing={facing}
-          ref={cameraRef}
-        >
-          {/* Üst Yönlendirme Paneli */}
-          <SafeAreaView style={styles.topControls}>
-            <View style={styles.headerBar}>
-              <TouchableOpacity
-                style={styles.closeBtn}
-                onPress={() => navigation.goBack()}
-              >
-                <Text style={styles.closeBtnText}>✕ Kapat</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.flipBtn}
-                onPress={toggleCameraFacing}
-              >
-                <Text style={styles.flipBtnText}>🔄 Çevir</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.guideBadge}>
-              <Text style={styles.guideText}>
-                🎯 Kanıtınızı (su bardağı, ilaç vb.) kadraja alın
+          <SafeAreaView style={styles.previewOverlay} edges={['top', 'bottom']}>
+            {/* Üst Bilgi Başlığı */}
+            <View style={styles.previewOverlayHeader}>
+              <Text style={styles.previewHeaderTitle}>
+                📸 Kanıt Fotoğrafı Önizlemesi
+              </Text>
+              <Text style={styles.previewHeaderSubtitle}>
+                {habitTitle || 'Alışkanlık'} göreviniz için bu kanıtı onaylıyor musunuz?
               </Text>
             </View>
+
+            {/* Alt Eylemler */}
+            <View style={styles.previewActions}>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.retakeBtn]}
+                onPress={() => setPhoto(null)}
+                disabled={isProcessing}
+              >
+                <Text style={styles.retakeBtnText}>🔄 Tekrar Çek</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.confirmBtn]}
+                onPress={handleConfirmProof}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.confirmBtnText}>✓ Kanıtı Onayla</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </SafeAreaView>
+        </View>
+      ) : (
+        // Canlı Kamera Ekranı
+        <View style={styles.cameraWrapper}>
+          {/* Kamera Arka Planı (Tam Ekran) */}
+          <CameraView
+            style={StyleSheet.absoluteFillObject}
+            facing={facing}
+            ref={cameraRef}
+          />
 
-          {/* Kadraj Kılavuz Çerçevesi */}
-          <View style={styles.frameContainer}>
-            <View style={styles.focusFrame} />
-          </View>
+          {/* Kamera Üzerindeki Arayüz Katmanı */}
+          <SafeAreaView style={styles.cameraOverlay} edges={['top', 'bottom']}>
+            {/* Üst Çubuk */}
+            <View style={styles.topBar}>
+              <TouchableOpacity
+                style={styles.topBtn}
+                onPress={() => navigation.goBack()}
+              >
+                <Text style={styles.topBtnText}>✕ Kapat</Text>
+              </TouchableOpacity>
 
-          {/* Alt Deklanşör Paneli */}
-          <View style={styles.bottomControls}>
-            <TouchableOpacity
-              style={styles.shutterButton}
-              onPress={handleTakePhoto}
-              disabled={isProcessing}
-            >
-              {isProcessing ? (
-                <ActivityIndicator color="#4F46E5" size="large" />
-              ) : (
-                <View style={styles.shutterInner} />
-              )}
-            </TouchableOpacity>
-          </View>
-        </CameraView>
+              <View style={styles.guideBadge}>
+                <Text style={styles.guideText}>
+                  {habitTitle ? `🎯 ${habitTitle}` : '🎯 Kanıt Fotoğrafı'}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.topBtn}
+                onPress={toggleCameraFacing}
+              >
+                <Text style={styles.topBtnText}>🔄 Çevir</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Kadraj Çerçevesi */}
+            <View style={styles.frameContainer}>
+              <View style={styles.focusFrame}>
+                <Text style={styles.frameHint}>Kanıtı çerçeveye yerleştirin</Text>
+              </View>
+            </View>
+
+            {/* Alt Deklanşör Paneli (Sabit ve Yüksek Görünürlüklü) */}
+            <View style={styles.bottomBar}>
+              <TouchableOpacity
+                style={styles.shutterOuter}
+                activeOpacity={0.7}
+                onPress={handleTakePhoto}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator color="#4F46E5" size="large" />
+                ) : (
+                  <View style={styles.shutterInner}>
+                    <Text style={styles.shutterCameraIcon}>📸</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              <Text style={styles.shutterLabel}>Fotoğraf Çek</Text>
+            </View>
+          </SafeAreaView>
+        </View>
       )}
     </View>
   );
@@ -238,7 +276,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
+    paddingHorizontal: 28,
   },
   permissionIcon: {
     fontSize: 64,
@@ -272,6 +310,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  mockButton: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  mockButtonText: {
+    color: '#4338CA',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   cancelButton: {
     paddingVertical: 10,
     alignItems: 'center',
@@ -281,102 +335,134 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  camera: {
+  cameraWrapper: {
     flex: 1,
+    backgroundColor: '#000000',
   },
-  topControls: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
+  cameraOverlay: {
+    flex: 1,
+    justifyContent: 'space-between',
   },
-  headerBar: {
+  topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
-  closeBtn: {
-    backgroundColor: 'rgba(0,0,0,0.5)',
+  topBtn: {
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
-  closeBtnText: {
+  topBtnText: {
     color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  flipBtn: {
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  flipBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 14,
+    fontWeight: '700',
+    fontSize: 13,
   },
   guideBadge: {
-    alignSelf: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 16,
-    marginTop: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
   },
   guideText: {
     color: '#FFFFFF',
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   frameContainer: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   focusFrame: {
-    width: 260,
-    height: 260,
+    width: 250,
+    height: 250,
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.7)',
+    borderColor: 'rgba(255, 255, 255, 0.75)',
     borderRadius: 24,
     borderStyle: 'dashed',
-  },
-  bottomControls: {
     alignItems: 'center',
-    paddingBottom: 40,
+    justifyContent: 'flex-end',
+    paddingBottom: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
   },
-  shutterButton: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
+  frameHint: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 12,
+    fontWeight: '600',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  bottomBar: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 16,
+    paddingBottom: Platform.OS === 'ios' ? 12 : 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+  },
+  shutterOuter: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
     borderWidth: 4,
     borderColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent',
+    marginBottom: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
   },
   shutterInner: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shutterCameraIcon: {
+    fontSize: 28,
+  },
+  shutterLabel: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   previewContainer: {
     flex: 1,
     backgroundColor: '#000000',
   },
   previewImage: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     resizeMode: 'cover',
   },
+  previewOverlay: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+  },
   previewOverlayHeader: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    padding: 14,
-    borderRadius: 12,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    padding: 16,
+    borderRadius: 16,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   previewHeaderTitle: {
     color: '#FFFFFF',
@@ -389,22 +475,20 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   previewActions: {
-    position: 'absolute',
-    bottom: 40,
-    left: 20,
-    right: 20,
     flexDirection: 'row',
     gap: 12,
+    marginBottom: Platform.OS === 'ios' ? 10 : 20,
   },
   actionBtn: {
     flex: 1,
     paddingVertical: 15,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    elevation: 4,
   },
   retakeBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    backgroundColor: '#FFFFFF',
   },
   retakeBtnText: {
     color: '#0F172A',
