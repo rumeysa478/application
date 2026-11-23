@@ -112,16 +112,24 @@ export const snoozeHabit = async (habitId) => {
 };
 
 /**
- * Alışkanlığı tamamlandı olarak işaretler ve erteleme sayacını sıfırlar.
+ * Alışkanlığı tamamlandı olarak işaretler, kanıt bilgilerini kaydeder ve erteleme sayacını sıfırlar.
  * @param {string} habitId
+ * @param {string|null} [proofUri=null] - Çekilen kanıt fotoğrafının URI adresi
  * @returns {Promise<Array>} Güncel liste
  */
-export const completeHabit = async (habitId) => {
+export const completeHabit = async (habitId, proofUri = null) => {
   try {
     const habits = await getHabits();
+    const now = new Date().toISOString();
     const updatedList = habits.map((habit) =>
       habit.id === habitId
-        ? { ...habit, isCompleted: true, snoozeCount: 0 }
+        ? {
+            ...habit,
+            isCompleted: true,
+            snoozeCount: 0,
+            lastProofUri: proofUri || habit.lastProofUri || null,
+            lastProofAt: now,
+          }
         : habit
     );
     await AsyncStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(updatedList));

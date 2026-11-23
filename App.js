@@ -6,6 +6,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import HomeScreen from './src/screens/HomeScreen';
 import AddHabitScreen from './src/screens/AddHabitScreen';
+import CameraProofScreen from './src/screens/CameraProofScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -44,6 +45,14 @@ export default function App() {
             options={{
               title: 'Yeni Alışkanlık Ekle',
               headerBackTitle: 'Geri',
+            }}
+          />
+          <Stack.Screen
+            name="CameraProof"
+            component={CameraProofScreen}
+            options={{
+              headerShown: false,
+              presentation: 'fullScreenModal',
             }}
           />
         </Stack.Navigator>

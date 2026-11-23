@@ -7,13 +7,13 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
+  Image,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   getHabits,
   deleteHabit,
   snoozeHabit,
-  completeHabit,
   resetHabit,
 } from '../services/storage';
 import {
@@ -24,7 +24,6 @@ import {
 import {
   startPersistentVibration,
   stopVibration,
-  isVibrationActive,
 } from '../services/vibration';
 
 export default function HomeScreen({ navigation }) {
@@ -36,7 +35,6 @@ export default function HomeScreen({ navigation }) {
   useEffect(() => {
     requestNotificationPermissions();
 
-    // Bileşen unmount olursa titreşimi durdur
     return () => {
       stopVibration();
     };
@@ -70,12 +68,8 @@ export default function HomeScreen({ navigation }) {
 
     if (currentSnooze < 3) {
       try {
-        // Erteleme sayacını 1 artır ve kaydet
         const updated = await snoozeHabit(item.id);
-
-        // 30 dakikalık (veya test için zamanlanmış) bildirimi planla
         const { fact } = await scheduleSnoozeNotification(item, 30);
-
         await loadHabits();
 
         const remaining = 3 - (updated ? updated.snoozeCount : currentSnooze + 1);
@@ -89,7 +83,7 @@ export default function HomeScreen({ navigation }) {
         console.error(error);
       }
     } else {
-      // 3 erteleme hakkı doldu! Zorunlu modu ve titreşimi başlat
+      // 3 erteleme hakkı doldu! Zorunlu mod ve titreşim başlat
       triggerZorunluMod(item);
     }
   };
@@ -101,34 +95,26 @@ export default function HomeScreen({ navigation }) {
 
     Alert.alert(
       '🚨 ZORUNLU MOD BAŞLATILDI!',
-      `"${item.title}" için 3/3 erteleme hakkınız doldu!\n\nKanıt fotoğrafı çekilene kadar sürekli titreşim uyarısı devam edecektir. Durdurmak için kanıt butonuna basın.`,
+      `"${item.title}" için 3/3 erteleme hakkınız doldu!\n\nKanıt fotoğrafı çekilene kadar sürekli titreşim uyarısı devam edecektir. Durdurmak için kanıt kamerasına gidin.`,
       [
         {
-          text: '🔕 Titreşimi Sustur / Kanıtla',
-          onPress: () => handleProof(item),
+          text: '📸 Kanıt Fotoğrafı Çek',
+          onPress: () => handleOpenProofCamera(item),
         },
       ]
     );
   };
 
-  // Kanıtla / Görevi Tamamla Mantığı
-  const handleProof = async (item) => {
-    // Eğer titreşim çalışıyorsa durdur
+  // Kamera Kanıt Ekranına Yönlendirme
+  const handleOpenProofCamera = (item) => {
     stopVibration();
-    setActiveAlertHabit(null);
-
-    try {
-      // Görevi tamamlandı olarak işaretle ve sayacı sıfırla
-      await completeHabit(item.id);
-      await loadHabits();
-
-      Alert.alert(
-        '🎉 Tebrikler!',
-        `"${item.title}" alışkanlığı başarıyla tamamlandı ve onaylandı! Erteleme haklarınız sıfırlandı.\n\n(Bir sonraki aşamada buraya doğrudan Kamera ile fotoğraf kanıtı doğrulaması eklenecektir.)`
-      );
-    } catch (error) {
-      console.error('Tamamlama hatası:', error);
+    if (activeAlertHabit && activeAlertHabit.id === item.id) {
+      setActiveAlertHabit(null);
     }
+    navigation.navigate('CameraProof', {
+      habitId: item.id,
+      habitTitle: item.title,
+    });
   };
 
   // Alışkanlığı Tekrar Başlat
@@ -173,6 +159,19 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+  // Tarih ve saat biçimlendirme
+  const formatProofTime = (isoString) => {
+    if (!isoString) return '';
+    try {
+      const d = new Date(isoString);
+      const hours = d.getHours().toString().padStart(2, '0');
+      const minutes = d.getMinutes().toString().padStart(2, '0');
+      return `${hours}:${minutes}`;
+    } catch {
+      return '';
+    }
+  };
+
   const renderHabitCard = ({ item }) => {
     const maxSnooze = item.maxSnooze || 3;
     const currentSnooze = item.snoozeCount || 0;
@@ -182,7 +181,7 @@ export default function HomeScreen({ navigation }) {
     // Erteleme durumuna göre rozet rengi
     const snoozeBadgeColor =
       remainingSnooze === 0
-        ? '#EF4444' // Kırmızı (Hak kalmadı!)
+        ? '#EF4444' // Kırmızı
         : remainingSnooze === 1
         ? '#F59E0B' // Turuncu
         : '#10B981'; // Yeşil
@@ -208,23 +207,27 @@ export default function HomeScreen({ navigation }) {
 
         {/* Bilgilendirme Rozetleri */}
         <View style={styles.badgesRow}>
-          <View
-            style={[
-              styles.badge,
-              {
-                backgroundColor: snoozeBadgeColor + '20',
-                borderColor: snoozeBadgeColor,
-              },
-            ]}
-          >
-            <Text style={[styles.badgeText, { color: snoozeBadgeColor }]}>
-              ⏳ Erteleme: {currentSnooze}/{maxSnooze} (Kalan: {remainingSnooze})
-            </Text>
-          </View>
+          {!item.isCompleted && (
+            <View
+              style={[
+                styles.badge,
+                {
+                  backgroundColor: snoozeBadgeColor + '20',
+                  borderColor: snoozeBadgeColor,
+                },
+              ]}
+            >
+              <Text style={[styles.badgeText, { color: snoozeBadgeColor }]}>
+                ⏳ Erteleme: {currentSnooze}/{maxSnooze} (Kalan: {remainingSnooze})
+              </Text>
+            </View>
+          )}
 
           {item.isCompleted && (
             <View style={[styles.badge, styles.completedBadge]}>
-              <Text style={styles.completedBadgeText}>✓ Tamamlandı</Text>
+              <Text style={styles.completedBadgeText}>
+                ✓ Bugün Doğrulandı {item.lastProofAt ? `(${formatProofTime(item.lastProofAt)})` : ''}
+              </Text>
             </View>
           )}
 
@@ -235,18 +238,34 @@ export default function HomeScreen({ navigation }) {
           )}
         </View>
 
-        {/* Aksiyon Butonları */}
+        {/* Aksiyon Butonları & Kanıt Önizleme */}
         {item.isCompleted ? (
-          <TouchableOpacity
-            style={styles.resetButton}
-            activeOpacity={0.8}
-            onPress={() => handleReset(item)}
-          >
-            <Text style={styles.resetButtonText}>🔄 Alışkanlığı Tekrar Başlat</Text>
-          </TouchableOpacity>
+          <View style={styles.completedArea}>
+            {item.lastProofUri && (
+              <View style={styles.proofPreviewRow}>
+                <Image
+                  source={{ uri: item.lastProofUri }}
+                  style={styles.proofThumbnail}
+                />
+                <View style={styles.proofDetails}>
+                  <Text style={styles.proofTitle}>📸 Kanıt Fotoğrafı Kayıtlı</Text>
+                  <Text style={styles.proofSubtitle}>
+                    Doğrulama zamanı: {formatProofTime(item.lastProofAt) || 'Bugün'}
+                  </Text>
+                </View>
+              </View>
+            )}
+            <TouchableOpacity
+              style={styles.resetButton}
+              activeOpacity={0.8}
+              onPress={() => handleReset(item)}
+            >
+              <Text style={styles.resetButtonText}>🔄 Alışkanlığı Tekrar Başlat</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           <View style={styles.actionButtonsRow}>
-            {/* Kanıtla / Tamamla Butonu */}
+            {/* Kanıtla Butonu -> Kamera Ekranını Açar */}
             <TouchableOpacity
               style={[
                 styles.actionButton,
@@ -254,10 +273,10 @@ export default function HomeScreen({ navigation }) {
                 isAlertActive && styles.kanitlaAlertButton,
               ]}
               activeOpacity={0.7}
-              onPress={() => handleProof(item)}
+              onPress={() => handleOpenProofCamera(item)}
             >
               <Text style={styles.kanitlaButtonText}>
-                {isAlertActive ? '🔕 Sustur & Kanıtla' : '📸 Kanıtla'}
+                {isAlertActive ? '📸 Sustur & Fotoğraf Çek' : '📸 Kanıtla'}
               </Text>
             </TouchableOpacity>
 
@@ -297,14 +316,14 @@ export default function HomeScreen({ navigation }) {
               🚨 ZORUNLU MOD: Titreşim Aktif!
             </Text>
             <Text style={styles.alertBannerSubtitle}>
-              "{activeAlertHabit.title}" için 3 erteleme bitti. Susturmak için kanıtlayın.
+              "{activeAlertHabit.title}" için 3 erteleme hakkı doldu. Fotoğraf çekene kadar devam eder.
             </Text>
           </View>
           <TouchableOpacity
             style={styles.alertBannerButton}
-            onPress={() => handleProof(activeAlertHabit)}
+            onPress={() => handleOpenProofCamera(activeAlertHabit)}
           >
-            <Text style={styles.alertBannerButtonText}>Sustur</Text>
+            <Text style={styles.alertBannerButtonText}>📸 Kanıtla</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -510,7 +529,7 @@ const styles = StyleSheet.create({
   completedBadgeText: {
     color: '#15803D',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   alertBadge: {
     backgroundColor: '#FEE2E2',
@@ -520,6 +539,37 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     fontSize: 12,
     fontWeight: '800',
+  },
+  completedArea: {
+    marginTop: 4,
+  },
+  proofPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 8,
+    marginBottom: 10,
+  },
+  proofThumbnail: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    marginRight: 10,
+    backgroundColor: '#CBD5E1',
+  },
+  proofDetails: {
+    flex: 1,
+  },
+  proofTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  proofSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
   },
   actionButtonsRow: {
     flexDirection: 'row',
