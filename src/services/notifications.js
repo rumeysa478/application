@@ -49,23 +49,43 @@ export const requestNotificationPermissions = async () => {
 /**
  * Bir alışkanlık için zamanlanmış bildirim oluşturur.
  * İçeriğinde rastgele "Biliyor muydunuz?" bilgisi barındırır.
+ * Su veya İlaç türüne göre mesaj metnini dinamik olarak uyarlar.
+ *
  * @param {Object} habit
  * @param {string} habit.title
- * @param {number} habit.intervalMinutes
+ * @param {string} [habit.type='water']
+ * @param {number} [habit.intervalMinutes]
  * @param {number} [customSeconds] - Test için opsiyonel saniye değeri
  * @returns {Promise<string>} Notification ID
  */
 export const scheduleHabitNotification = async (habit, customSeconds = null) => {
   const fact = getRandomFact();
+  const isMedication = habit.type === 'medication';
   const seconds = customSeconds || Math.max(60, Number(habit.intervalMinutes || 60) * 60);
-  const targetText = habit.dailyTargetLiters ? ` (Bugün: ${habit.todayIntakeLiters || 0}/${habit.dailyTargetLiters} L)` : '';
+
+  let title = `${habit.title} Vakti! • Biliyor muydunuz?`;
+  let body = '';
+
+  if (isMedication) {
+    const doseText = habit.targetDoses
+      ? ` (Bugün: ${habit.dosesToday || 0}/${habit.targetDoses} Doz)`
+      : '';
+    title = `💊 ${habit.title} İlaç Saati! • Biliyor muydunuz?`;
+    body = `"${fact.fact}"\n\n💊 İlacınızı almayı ve kutusunu/tabletini kamerayla doğrulamayı unutmayın!${doseText}`;
+  } else {
+    const targetText = habit.dailyTargetLiters
+      ? ` (Bugün: ${habit.todayIntakeLiters || 0}/${habit.dailyTargetLiters} L)`
+      : '';
+    body = `"${fact.fact}"\n\n💧 Bir bardak su iç ve kamerayla doğrula!${targetText}`;
+  }
 
   const identifier = await Notifications.scheduleNotificationAsync({
     content: {
-      title: `${habit.title} Vakti! • Biliyor muydunuz?`,
-      body: `"${fact.fact}"\n\n💧 Bir bardak su iç ve kamerayla doğrula!${targetText}`,
+      title,
+      body,
       data: {
         habitId: habit.id,
+        habitType: habit.type || 'water',
         factId: fact.id,
         category: fact.category,
       },
@@ -82,28 +102,36 @@ export const scheduleHabitNotification = async (habit, customSeconds = null) => 
 };
 
 /**
- * 30 dakikalık erteleme (Snooze) bildirimi planlar.
+ * Erteleme (Snooze) bildirimi planlar.
+ * KURAL 2: İlaç alışkanlıklarında 15 dakika, su alışkanlıklarında 30 dakika erteleme uygulanır.
+ *
  * @param {Object} habit
- * @param {number} [snoozeMinutes=30]
+ * @param {number} [snoozeMinutes=null] - Belirtilmezse habit.type'a göre 15 veya 30 dk
  * @param {number} [customSeconds=null] - Hızlı test için saniye parametresi
- * @returns {Promise<{ identifier: string, fact: Object }>}
+ * @returns {Promise<{ identifier: string, fact: Object, seconds: number, minutes: number }>}
  */
 export const scheduleSnoozeNotification = async (
   habit,
-  snoozeMinutes = 30,
+  snoozeMinutes = null,
   customSeconds = null
 ) => {
   const fact = getRandomFact();
-  const seconds = customSeconds || Math.max(10, snoozeMinutes * 60);
-  const nextSnoozeCount = (habit.snoozeCount || 0) + 1;
+  const isMedication = habit?.type === 'medication';
+  // İlaç ise 15 dakika, su ise 30 dakika (veya alışkanlıkta tanımlı değer)
+  const resolvedMinutes = Number(snoozeMinutes) || (isMedication ? 15 : Number(habit?.snoozeMinutes) || 30);
+  const seconds = customSeconds || Math.max(10, resolvedMinutes * 60);
+  const nextSnoozeCount = (habit?.snoozeCount || 0) + 1;
   const remainingRights = Math.max(0, 3 - nextSnoozeCount);
+
+  const titlePrefix = isMedication ? '💊 ⏳ 15 Dk İlaç Ertelemesi' : '⏳ 30 Dk Su Ertelemesi';
 
   const identifier = await Notifications.scheduleNotificationAsync({
     content: {
-      title: `⏳ Erteleme Vakti: ${habit.title} • Biliyor muydunuz?`,
-      body: `"${fact.fact}"\n\n⚠️ Kalan erteleme hakkınız: ${remainingRights}/3`,
+      title: `${titlePrefix}: ${habit?.title || 'Alışkanlık'} • Biliyor muydunuz?`,
+      body: `"${fact.fact}"\n\n⚠️ Kalan erteleme hakkınız: ${remainingRights}/3 (${resolvedMinutes} dakika sonra alarm)`,
       data: {
-        habitId: habit.id,
+        habitId: habit?.id,
+        habitType: habit?.type || 'water',
         isSnooze: true,
         snoozeCount: nextSnoozeCount,
       },
@@ -116,7 +144,7 @@ export const scheduleSnoozeNotification = async (
     },
   });
 
-  return { identifier, fact, seconds };
+  return { identifier, fact, seconds, minutes: resolvedMinutes };
 };
 
 /**

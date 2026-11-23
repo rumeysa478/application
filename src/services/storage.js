@@ -90,6 +90,7 @@ export const getHabits = async () => {
           ...habit,
           lastActiveDate: today,
           todayIntakeLiters: 0,
+          dosesToday: 0,
           isCompleted: false,
           snoozeCount: 0,
         };
@@ -112,32 +113,52 @@ export const getHabits = async () => {
 };
 
 /**
- * Yeni bir alışkanlık kaydeder.
+ * Yeni bir alışkanlık kaydeder (Su veya İlaç).
  *
  * @param {Object} habitData
  * @param {string} habitData.title - Alışkanlık başlığı
- * @param {number} habitData.intervalMinutes - Hatırlatma aralığı
- * @param {number} [habitData.dailyTargetLiters=2.5] - Günlük su hedefi (litre)
- * @param {number} [habitData.portionLiters=0.25] - Her bardak/doğrulama miktarı (litre)
- * @param {Object} [habitData.daysConfig] - Günlük saat aralıkları
+ * @param {'water'|'medication'} [habitData.type='water'] - Alışkanlık türü
+ * @param {number} [habitData.intervalMinutes] - Hatırlatma aralığı (su için)
+ * @param {number} [habitData.dailyTargetLiters] - Günlük su hedefi (litre - su için)
+ * @param {number} [habitData.portionLiters] - Her bardak/doğrulama miktarı (litre - su için)
+ * @param {Array<string>} [habitData.medicationTimes] - İlaç doz saatleri (ilaç için örn: ['09:00', '21:00'])
+ * @param {number} [habitData.targetDoses] - Günlük hedef ilaç dozu sayısı (ilaç için)
+ * @param {Object} [habitData.daysConfig] - Günlük saat/aktiflik aralıkları
  * @returns {Promise<Object>} Oluşturulan yeni alışkanlık
  */
 export const saveHabit = async ({
   title,
-  intervalMinutes,
+  type = 'water',
+  intervalMinutes = 60,
   dailyTargetLiters = 2.5,
   portionLiters = 0.25,
+  medicationTimes = ['09:00'],
+  targetDoses = null,
   daysConfig = DEFAULT_DAYS_CONFIG,
 }) => {
   try {
     const existingHabits = await getHabits();
+    const isMedication = type === 'medication';
+
+    const cleanMedTimes = Array.isArray(medicationTimes) && medicationTimes.length > 0
+      ? medicationTimes
+      : ['09:00'];
+
     const newHabit = {
       id: Date.now().toString() + '-' + Math.random().toString(36).substring(2, 7),
       title: title.trim(),
-      intervalMinutes: Number(intervalMinutes),
-      dailyTargetLiters: Number(dailyTargetLiters) || 2.5,
-      portionLiters: Number(portionLiters) || 0.25,
+      type: isMedication ? 'medication' : 'water',
+      // Su alanları (İlaç seçilmişse null)
+      intervalMinutes: isMedication ? null : Number(intervalMinutes) || 60,
+      dailyTargetLiters: isMedication ? null : Number(dailyTargetLiters) || 2.5,
+      portionLiters: isMedication ? null : Number(portionLiters) || 0.25,
       todayIntakeLiters: 0,
+      // İlaç alanları (Su seçilmişse null)
+      medicationTimes: isMedication ? cleanMedTimes : null,
+      targetDoses: isMedication ? Number(targetDoses || cleanMedTimes.length) : null,
+      dosesToday: 0,
+      // Erteleme kuralı: İlaç için 15 dakika, Su için 30 dakika
+      snoozeMinutes: isMedication ? 15 : 30,
       lastActiveDate: getTodayKey(),
       intakeHistory: [],
       daysConfig: daysConfig || DEFAULT_DAYS_CONFIG,
@@ -146,6 +167,7 @@ export const saveHabit = async ({
       isCompleted: false,
       createdAt: new Date().toISOString(),
       lastProofAt: null,
+      lastProofUri: null,
     };
 
     const updatedHabits = [newHabit, ...existingHabits];
@@ -224,15 +246,17 @@ export const snoozeHabit = async (habitId) => {
 };
 
 /**
- * Kamera ile kanıt doğrulandıktan sonra su tüketimini kaydeder.
- * Geçici fotoğraf verisini kalıcı depolamaz; sadece zaman damgasını ve tüketim miktarını işler.
- * Günlük hedef tamamlanmışsa (todayIntakeLiters >= dailyTargetLiters) isCompleted = true yapar.
+ * Kamera ile kanıt doğrulandıktan sonra alışkanlık ilerlemesini kaydeder (Su veya İlaç).
+ * Geçici fotoğraf verisini kalıcı depolamaz; sadece zaman damgasını ve ilerlemeyi işler.
+ *
+ * Su için: Eklenen miktar (litre) bugünkü tüketime eklenir, todayIntakeLiters >= dailyTargetLiters ise tamamlanır.
+ * İlaç için: Bugünkü alınan doz sayısı artırılır (dosesToday + 1), dosesToday >= targetDoses ise tamamlanır.
  *
  * @param {string} habitId
- * @param {number} [intakeAmount] - Bu doğrulamada eklenen miktar (litre)
+ * @param {number} [intakeAmount] - Bu doğrulamada eklenen su miktarı (litre)
  * @returns {Promise<{ habit: Object, goalReached: boolean, updatedList: Array }>}
  */
-export const recordWaterIntakeProof = async (habitId, intakeAmount = null) => {
+export const recordHabitProof = async (habitId, intakeAmount = null) => {
   try {
     const habits = await getHabits();
     const now = new Date().toISOString();
@@ -241,19 +265,32 @@ export const recordWaterIntakeProof = async (habitId, intakeAmount = null) => {
 
     const updatedList = habits.map((habit) => {
       if (habit.id === habitId) {
-        const addAmount = Number(intakeAmount) || Number(habit.portionLiters) || 0.25;
-        const target = Number(habit.dailyTargetLiters) || 2.5;
-        const currentIntake = Number(habit.todayIntakeLiters || 0);
-        const newTotalIntake = Number((currentIntake + addAmount).toFixed(2));
-
-        const isGoalReached = newTotalIntake >= target;
-        goalReached = isGoalReached;
-
-        const intakeRecord = {
+        const isMedication = habit.type === 'medication';
+        let isGoalReached = false;
+        let newTotalIntake = Number(habit.todayIntakeLiters || 0);
+        let newDosesToday = Number(habit.dosesToday || 0);
+        const record = {
           id: Date.now().toString(),
           timestamp: now,
-          amountLiters: addAmount,
+          type: isMedication ? 'medication' : 'water',
         };
+
+        if (isMedication) {
+          newDosesToday += 1;
+          const targetDoses = Number(habit.targetDoses || (habit.medicationTimes?.length || 1));
+          isGoalReached = newDosesToday >= targetDoses;
+          record.doseNumber = newDosesToday;
+          record.targetDoses = targetDoses;
+        } else {
+          const addAmount = Number(intakeAmount) || Number(habit.portionLiters) || 0.25;
+          const target = Number(habit.dailyTargetLiters) || 2.5;
+          newTotalIntake = Number((newTotalIntake + addAmount).toFixed(2));
+          isGoalReached = newTotalIntake >= target;
+          record.amountLiters = addAmount;
+          record.targetLiters = target;
+        }
+
+        goalReached = isGoalReached;
 
         const existingHistory = Array.isArray(habit.intakeHistory)
           ? habit.intakeHistory
@@ -262,11 +299,12 @@ export const recordWaterIntakeProof = async (habitId, intakeAmount = null) => {
         updatedHabit = {
           ...habit,
           todayIntakeLiters: newTotalIntake,
+          dosesToday: newDosesToday,
           isCompleted: isGoalReached,
           snoozeCount: 0,
           lastProofAt: now,
           lastActiveDate: getTodayKey(),
-          intakeHistory: [intakeRecord, ...existingHistory],
+          intakeHistory: [record, ...existingHistory],
           // Geçici fotoğraf URI/Base64 saklanmaz (bellek/gizlilik temizliği)
           lastProofUri: null,
         };
@@ -278,10 +316,13 @@ export const recordWaterIntakeProof = async (habitId, intakeAmount = null) => {
     await AsyncStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(updatedList));
     return { habit: updatedHabit, goalReached, updatedList };
   } catch (error) {
-    console.error('Su tüketimi kaydedilirken hata oluştu:', error);
+    console.error('Alışkanlık kanıtı kaydedilirken hata oluştu:', error);
     throw error;
   }
 };
+
+// Geriye dönük uyumluluk için alias
+export const recordWaterIntakeProof = recordHabitProof;
 
 /**
  * Alışkanlığı sıfırlar (tekrar başlatır).
@@ -298,6 +339,7 @@ export const resetHabit = async (habitId) => {
             isCompleted: false,
             snoozeCount: 0,
             todayIntakeLiters: 0,
+            dosesToday: 0,
           }
         : habit
     );

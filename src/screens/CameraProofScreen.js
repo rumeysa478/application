@@ -18,6 +18,7 @@ import { recordWaterIntakeProof } from '../services/storage';
 import { stopVibration } from '../services/vibration';
 import { addProofScore } from '../services/userService';
 import {
+  analyzeProofImage,
   analyzeImageForWaterContainer,
   getStoredApiKey,
   setStoredApiKey,
@@ -28,11 +29,13 @@ export default function CameraProofScreen({ route, navigation }) {
   const {
     habitId,
     habitTitle,
+    habitType = 'water',
     portionLiters = 0.25,
     proofType = 'mandatory',
     zeroSnooze = false,
     onTime = true,
   } = route.params || {};
+  const isMedication = habitType === 'medication';
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState('back');
   const [photo, setPhoto] = useState(null);
@@ -101,7 +104,9 @@ export default function CameraProofScreen({ route, navigation }) {
         <Text style={styles.permissionIcon}>📷</Text>
         <Text style={styles.permissionTitle}>Kamera İzni Gerekli</Text>
         <Text style={styles.permissionSubtitle}>
-          Habitime su kabınızı yapay zekâ ile doğrulayabilmek için kamera erişimine ihtiyaç duyar.
+          {isMedication
+            ? 'Habitime ilacınızı veya kutusunu yapay zekâ ile doğrulayabilmek için kamera erişimine ihtiyaç duyar.'
+            : 'Habitime su kabınızı yapay zekâ ile doğrulayabilmek için kamera erişimine ihtiyaç duyar.'}
         </Text>
 
         <TouchableOpacity
@@ -224,15 +229,22 @@ export default function CameraProofScreen({ route, navigation }) {
         }
       }
 
-      // Base64 verisi varsa Gemini Vision API ile incele
+      // Base64 verisi varsa Gemini Vision API ile incele (Alışkanlık türüne duyarlı)
       if (base64ToUse) {
-        const aiResult = await analyzeImageForWaterContainer(base64ToUse);
+        const aiResult = await analyzeProofImage(base64ToUse, habitType);
 
-        // 1. Durum: Yapay zekâ nesneyi doğrulamadı (Su kabı yok)
-        if (!aiResult.containsWaterContainer && !aiResult.isApiKeyMissing && !aiResult.isNetworkError) {
+        const isSuccess = Boolean(aiResult.isValidProof || aiResult.containsWaterContainer);
+
+        // 1. Durum: Yapay zekâ nesneyi doğrulamadı
+        if (!isSuccess && !aiResult.isApiKeyMissing && !aiResult.isNetworkError) {
+          const failTitle = isMedication ? '❌ İlaç Doğrulanamadı' : '❌ Su Kabı Doğrulanamadı';
+          const failMsg = isMedication
+            ? `Yapay zekâ fotoğrafta bir ilaç kutusu, blister ambalaj, tablet, hap veya şurup tespit edemedi.\n\nAçıklama: ${aiResult.reason || aiResult.message || 'Yok'}\n\nLütfen ilacınızı veya kutusunu net gösterecek şekilde kadraja alın ve tekrar çekin.`
+            : `Yapay zekâ fotoğrafta bir su bardağı, su şişesi veya matara tespit edemedi.\n\nAçıklama: ${aiResult.reason || aiResult.message || 'Yok'}\n\nLütfen su kabınızı net gösterecek şekilde kadraja alın ve tekrar çekin.`;
+
           Alert.alert(
-            '❌ Su Kabı Doğrulanamadı',
-            `Yapay zekâ fotoğrafta bir su bardağı, su şişesi veya matara tespit edemedi.\n\nAçıklama: ${aiResult.reason || aiResult.message || 'Yok'}\n\nLütfen su kabınızı net gösterecek şekilde kadraja alın ve tekrar çekin.`,
+            failTitle,
+            failMsg,
             [
               {
                 text: 'Tekrar Fotoğraf Çek',
@@ -271,14 +283,14 @@ export default function CameraProofScreen({ route, navigation }) {
           return;
         }
 
-        // 3. Durum: Yapay zekâ su kabını başarıyla doğruladı!
-        if (aiResult.containsWaterContainer) {
+        // 3. Durum: Yapay zekâ başarıyla doğruladı!
+        if (isSuccess) {
           await finalizeIntake(portionLiters, aiResult.reason || aiResult.detectedObject);
           return;
         }
       } else {
         // Test fotoğrafı (base64 yoksa) manuel onay akışı
-        await finalizeIntake(portionLiters, 'Test Su Kabı');
+        await finalizeIntake(portionLiters, isMedication ? 'Test İlaç Ambalajı' : 'Test Su Kabı');
       }
     } catch (error) {
       console.error('Doğrulama hatası:', error);
@@ -295,7 +307,7 @@ export default function CameraProofScreen({ route, navigation }) {
     }
   };
 
-  // Su tüketimini kaydet, puan ver ve ekranı kapat
+  // İlerlemeyi kaydet, puan ver ve ekranı kapat (Fotoğrafı kalıcı tutma)
   const finalizeIntake = async (amount, detectedName = null) => {
     stopVibration();
     const result = await recordWaterIntakeProof(habitId, amount);
@@ -308,12 +320,8 @@ export default function CameraProofScreen({ route, navigation }) {
       goalReached: result.goalReached,
     });
 
-    // Geçici fotoğrafı temizle
+    // Geçici fotoğrafı temizle (Kalıcı saklanmaz)
     setPhoto(null);
-
-    const amountMl = Math.round(amount * 1000);
-    const totalIntake = result.habit.todayIntakeLiters;
-    const target = result.habit.dailyTargetLiters;
 
     let pointsMsg = '';
     if (proofType === 'mandatory') {
@@ -332,7 +340,7 @@ export default function CameraProofScreen({ route, navigation }) {
     } else {
       // Ek Kanıt
       if (scoreResult.isCapped) {
-        pointsMsg = '🪙 Günlük ek kanıt puan kotası (5/5) doldu. Puan eklenmedi fakat su tüketiminiz başarıyla kaydedildi.';
+        pointsMsg = `🪙 Günlük ek kanıt puan kotası (5/5) doldu. Puan eklenmedi fakat ${isMedication ? 'ilaç dozu' : 'su tüketimi'} başarıyla kaydedildi.`;
       } else {
         pointsMsg = `🪙 +${scoreResult.earnedPoints} Puan! (Ek Kanıt: +10 puan, 2x çarpanı uygulanmaz)`;
       }
@@ -340,19 +348,42 @@ export default function CameraProofScreen({ route, navigation }) {
 
     const mascotMsg = `🌱 Maskot Sağlığı: %${scoreResult.newWidgetHealth} (Günde maks +15 kademeli büyüme)`;
 
-    if (result.goalReached) {
-      Alert.alert(
-        '🎉 GÜNLÜK HEDEF TAMAMLANDI!',
-        `Su kabı doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml eklendi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n\n${pointsMsg}\n\n${mascotMsg}`,
-        [{ text: 'Harika!', onPress: () => navigation.goBack() }]
-      );
+    if (isMedication) {
+      const currentDoses = result.habit.dosesToday || 1;
+      const targetDoses = result.habit.targetDoses || 1;
+
+      if (result.goalReached) {
+        Alert.alert(
+          '🎉 GÜNLÜK İLAÇ HEDEFİ TAMAMLANDI!',
+          `İlaç doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\nBugünkü doz: ${currentDoses} / ${targetDoses} (Tüm dozlar alındı 🎉)\n\n${pointsMsg}\n\n${mascotMsg}`,
+          [{ text: 'Harika!', onPress: () => navigation.goBack() }]
+        );
+      } else {
+        Alert.alert(
+          '✅ İlaç Dozu Doğrulandı!',
+          `İlaç başarıyla doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\nBugünkü doz: ${currentDoses} / ${targetDoses} Doz Tamamlandı.\n\n${pointsMsg}\n\n${mascotMsg}`,
+          [{ text: 'Tamam', onPress: () => navigation.goBack() }]
+        );
+      }
     } else {
-      const remaining = (target - totalIntake).toFixed(2);
-      Alert.alert(
-        '✅ Kanıt Doğrulandı!',
-        `Su kabı başarıyla doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml kaydedildi.\nBugünkü toplam: ${totalIntake} L / ${target} L (Kalan: ${remaining} L)\n\n${pointsMsg}\n\n${mascotMsg}`,
-        [{ text: 'Tamam', onPress: () => navigation.goBack() }]
-      );
+      const amountMl = Math.round(amount * 1000);
+      const totalIntake = result.habit.todayIntakeLiters;
+      const target = result.habit.dailyTargetLiters;
+
+      if (result.goalReached) {
+        Alert.alert(
+          '🎉 GÜNLÜK HEDEF TAMAMLANDI!',
+          `Su kabı doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml eklendi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n\n${pointsMsg}\n\n${mascotMsg}`,
+          [{ text: 'Harika!', onPress: () => navigation.goBack() }]
+        );
+      } else {
+        const remaining = (target - totalIntake).toFixed(2);
+        Alert.alert(
+          '✅ Kanıt Doğrulandı!',
+          `Su kabı başarıyla doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml kaydedildi.\nBugünkü toplam: ${totalIntake} L / ${target} L (Kalan: ${remaining} L)\n\n${pointsMsg}\n\n${mascotMsg}`,
+          [{ text: 'Tamam', onPress: () => navigation.goBack() }]
+        );
+      }
     }
   };
 
@@ -370,7 +401,9 @@ export default function CameraProofScreen({ route, navigation }) {
           <SafeAreaView style={styles.previewOverlay} edges={['top', 'bottom']}>
             <View style={styles.previewHeader}>
               <Text style={styles.previewTitle}>
-                {proofType === 'mandatory' ? '🚨 Zorunlu Kanıt Analizi' : '💧 Ek Kanıt Analizi'}
+                {proofType === 'mandatory'
+                  ? (isMedication ? '🚨 Zorunlu İlaç Analizi' : '🚨 Zorunlu Su Analizi')
+                  : (isMedication ? '💊 Ek İlaç Analizi' : '💧 Ek Su Analizi')}
               </Text>
               <Text style={styles.previewSubtitle}>
                 {proofType === 'mandatory'
@@ -401,7 +434,7 @@ export default function CameraProofScreen({ route, navigation }) {
                   </View>
                 ) : (
                   <Text style={styles.verifyBtnText}>
-                    🤖 Doğrula (+{Math.round(portionLiters * 1000)}ml)
+                    {isMedication ? '🤖 İlacı Doğrula (Doz)' : `🤖 Doğrula (+${Math.round(portionLiters * 1000)}ml)`}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -443,7 +476,7 @@ export default function CameraProofScreen({ route, navigation }) {
 
               <View style={styles.guideBadge}>
                 <Text style={styles.guideBadgeText}>
-                  {proofType === 'mandatory' ? '🚨 Zorunlu Kanıt' : '💧 Ek Kanıt'} • {habitTitle || 'Su Kabı'}
+                  {proofType === 'mandatory' ? '🚨 Zorunlu Kanıt' : '✨ Ek Kanıt'} • {habitTitle || (isMedication ? 'İlaç' : 'Su Kabı')}
                 </Text>
               </View>
 
@@ -467,7 +500,11 @@ export default function CameraProofScreen({ route, navigation }) {
             {/* Merkez Hedef Çerçevesi */}
             <View style={styles.frameContainer}>
               <View style={styles.focusFrame}>
-                <Text style={styles.frameHint}>Su bardağı veya matarayı çerçeveye alın</Text>
+                <Text style={styles.frameHint}>
+                  {isMedication
+                    ? 'İlaç kutusunu veya tableti çerçeveye alın'
+                    : 'Su bardağı veya matarayı çerçeveye alın'}
+                </Text>
               </View>
             </View>
 

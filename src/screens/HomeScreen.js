@@ -119,15 +119,17 @@ export default function HomeScreen({ navigation }) {
 
     if (currentSnooze < 3) {
       try {
+        const isMedication = item.type === 'medication';
+        const snoozeMins = isMedication ? 15 : (Number(item.snoozeMinutes) || 30);
         const updated = await snoozeHabit(item.id);
-        const { fact } = await scheduleSnoozeNotification(item, 30);
+        const { fact } = await scheduleSnoozeNotification(item, snoozeMins);
         await loadData();
 
         const remaining = 3 - (updated ? updated.snoozeCount : currentSnooze + 1);
 
         Alert.alert(
-          '⏳ 30 Dakika Ertelendi',
-          `Hatırlatma 30 dakika sonraya planlandı.\n\nKalan erteleme hakkınız: ${remaining}/3\n\n💡 Biliyor muydunuz?\n"${fact.fact}"`
+          `⏳ ${snoozeMins} Dakika Ertelendi`,
+          `Hatırlatma ${snoozeMins} dakika sonraya planlandı.\n\nKalan erteleme hakkınız: ${remaining}/3\n\n💡 Biliyor muydunuz?\n"${fact.fact}"`
         );
       } catch (error) {
         Alert.alert('Hata', 'Erteleme işlemi gerçekleştirilemedi.');
@@ -143,9 +145,12 @@ export default function HomeScreen({ navigation }) {
     setActiveAlertHabit(item);
     startPersistentVibration();
 
+    const isMedication = item.type === 'medication';
+    const proofTargetText = isMedication ? 'ilaç kutusu veya tablet' : 'su bardağı';
+
     Alert.alert(
       '🚨 ZORUNLU MOD BAŞLATILDI!',
-      `"${item.title}" için 3/3 erteleme hakkınız doldu!\n\nKamera ile su bardağı kanıtı onaylanana kadar titreşim uyarısı devam edecektir.`,
+      `"${item.title}" için 3/3 erteleme hakkınız doldu!\n\nKamera ile ${proofTargetText} kanıtı onaylanana kadar titreşim uyarısı devam edecektir.`,
       [
         {
           text: '📸 Kanıt Fotoğrafı Çek',
@@ -168,7 +173,10 @@ export default function HomeScreen({ navigation }) {
     navigation.navigate('CameraProof', {
       habitId: item.id,
       habitTitle: item.title,
+      habitType: item.type || 'water',
       portionLiters: item.portionLiters || 0.25,
+      targetDoses: item.targetDoses,
+      dosesToday: item.dosesToday,
       proofType,
       zeroSnooze,
       onTime,
@@ -197,9 +205,12 @@ export default function HomeScreen({ navigation }) {
 
   // Alışkanlığı Sıfırla
   const handleReset = async (item) => {
+    const isMedication = item.type === 'medication';
+    const textTarget = isMedication ? 'ilaç dozlarını' : 'su tüketimini';
+
     Alert.alert(
       'Bugünü Sıfırla',
-      `"${item.title}" için bugünkü su tüketimini sıfırlayıp baştan başlatmak istiyor musunuz?`,
+      `"${item.title}" için bugünkü ${textTarget} sıfırlayıp baştan başlatmak istiyor musunuz?`,
       [
         { text: 'Vazgeç', style: 'cancel' },
         {
@@ -272,16 +283,31 @@ export default function HomeScreen({ navigation }) {
   };
 
   const renderHabitCard = ({ item }) => {
+    const isMedication = item.type === 'medication';
     const maxSnooze = item.maxSnooze || 3;
     const currentSnooze = item.snoozeCount || 0;
     const remainingSnooze = Math.max(0, maxSnooze - currentSnooze);
     const isAlertActive = activeAlertHabit && activeAlertHabit.id === item.id;
 
+    // Su değişkenleri
     const targetLiters = Number(item.dailyTargetLiters) || 2.5;
     const currentIntake = Number(item.todayIntakeLiters || 0);
-    const percentage = Math.min(100, Math.round((currentIntake / targetLiters) * 100));
-    const isGoalCompleted = currentIntake >= targetLiters;
+
+    // İlaç değişkenleri
+    const targetDoses = Number(item.targetDoses || (item.medicationTimes?.length || 1));
+    const currentDoses = Number(item.dosesToday || 0);
+
+    // İlerleme ve Tamamlanma
+    const percentage = isMedication
+      ? Math.min(100, Math.round((currentDoses / targetDoses) * 100))
+      : Math.min(100, Math.round((currentIntake / targetLiters) * 100));
+
+    const isGoalCompleted = isMedication
+      ? currentDoses >= targetDoses
+      : currentIntake >= targetLiters;
+
     const isWorkingHours = isWithinActiveHours(item);
+    const snoozeDurationText = isMedication ? '15 dk' : '30 dk';
 
     const snoozeBadgeColor =
       remainingSnooze === 0
@@ -295,11 +321,22 @@ export default function HomeScreen({ navigation }) {
         {/* Kart Başlığı ve Eylem İkonları */}
         <View style={styles.cardHeader}>
           <View style={styles.titleContainer}>
-            <Text style={styles.habitTitle}>{item.title}</Text>
+            <View style={styles.titleWithBadgeRow}>
+              <Text style={styles.habitTitle}>{item.title}</Text>
+              <View style={[styles.typeMiniTag, isMedication ? styles.typeMiniTagMed : styles.typeMiniTagWater]}>
+                <Text style={[styles.typeMiniTagText, isMedication ? styles.typeMiniTagTextMed : styles.typeMiniTagTextWater]}>
+                  {isMedication ? '💊 İLAÇ' : '💧 SU'}
+                </Text>
+              </View>
+            </View>
+
             <Text style={styles.intervalText}>
-              ⏱️ Her {item.intervalMinutes} dk • Hedef: {targetLiters} L / gün
+              {isMedication
+                ? `💊 Günde ${targetDoses} Doz • Saatler: ${(item.medicationTimes || []).join(', ') || 'Belirtilmedi'}`
+                : `⏱️ Her ${item.intervalMinutes} dk • Hedef: ${targetLiters} L / gün`}
             </Text>
           </View>
+
           <View style={styles.headerActions}>
             <TouchableOpacity
               style={styles.actionIconBtn}
@@ -318,14 +355,25 @@ export default function HomeScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Günlük Su İlerleme Çubuğu */}
+        {/* Günlük İlerleme Çubuğu */}
         <View style={styles.progressContainer}>
           <View style={styles.progressHeader}>
             <Text style={styles.progressLabel}>
-              💧 Günlük Su Tüketimi:{' '}
-              <Text style={styles.progressBold}>
-                {currentIntake.toFixed(2)} / {targetLiters.toFixed(2)} L
-              </Text>
+              {isMedication ? (
+                <>
+                  💊 Bugünkü İlaç Dozu:{' '}
+                  <Text style={styles.progressBold}>
+                    {currentDoses} / {targetDoses} Alındı
+                  </Text>
+                </>
+              ) : (
+                <>
+                  💧 Günlük Su Tüketimi:{' '}
+                  <Text style={styles.progressBold}>
+                    {currentIntake.toFixed(2)} / {targetLiters.toFixed(2)} L
+                  </Text>
+                </>
+              )}
             </Text>
             <Text
               style={[
@@ -342,6 +390,7 @@ export default function HomeScreen({ navigation }) {
             <View
               style={[
                 styles.progressBarFill,
+                isMedication && styles.progressBarFillMed,
                 { width: `${percentage}%` },
                 isGoalCompleted && styles.progressBarFillCompleted,
               ]}
@@ -382,7 +431,7 @@ export default function HomeScreen({ navigation }) {
               ]}
             >
               <Text style={[styles.badgeText, { color: snoozeBadgeColor }]}>
-                ⏳ Erteleme: {currentSnooze}/{maxSnooze}
+                ⏳ Erteleme: {currentSnooze}/{maxSnooze} ({snoozeDurationText})
               </Text>
             </View>
           )}
@@ -390,7 +439,7 @@ export default function HomeScreen({ navigation }) {
           {isGoalCompleted && (
             <View style={[styles.badge, styles.completedBadge]}>
               <Text style={styles.completedBadgeText}>
-                ✓ Günlük Hedefe Ulaşıldı! 🎉
+                {isMedication ? '✓ Bugünün Dozları Tamamlandı! 🎉' : '✓ Günlük Hedefe Ulaşıldı! 🎉'}
               </Text>
             </View>
           )}
@@ -430,6 +479,10 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.kanitlaButtonText}>
               {isAlertActive
                 ? '📸 Sustur & Fotoğraf Çek'
+                : isMedication
+                ? isGoalCompleted
+                  ? `📸 Ekstra Doz Kanıtla (${currentDoses}/${targetDoses})`
+                  : `📸 İlaç Kanıtı Ekle (${currentDoses}/${targetDoses} Doz)`
                 : isGoalCompleted
                 ? `📸 Ekstra Su Ekle (+${Math.round((item.portionLiters || 0.25) * 1000)}ml)`
                 : `📸 Kanıt Ekle (+${Math.round((item.portionLiters || 0.25) * 1000)}ml)`}
@@ -462,7 +515,7 @@ export default function HomeScreen({ navigation }) {
                   remainingSnooze === 0 && styles.erteleDisabledButtonText,
                 ]}
               >
-                {remainingSnooze === 0 ? '🚨 Hak Bitti' : '⏳ Ertele (30 dk)'}
+                {remainingSnooze === 0 ? '🚨 Hak Bitti' : `⏳ Ertele (${snoozeDurationText})`}
               </Text>
             </TouchableOpacity>
           )}
@@ -848,6 +901,36 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
+  titleWithBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  typeMiniTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  typeMiniTagWater: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  typeMiniTagMed: {
+    backgroundColor: '#FAF5FF',
+    borderColor: '#E9D5FF',
+  },
+  typeMiniTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  typeMiniTagTextWater: {
+    color: '#1D4ED8',
+  },
+  typeMiniTagTextMed: {
+    color: '#7E22CE',
+  },
   habitTitle: {
     fontSize: 17,
     fontWeight: '700',
@@ -909,6 +992,9 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#3B82F6',
     borderRadius: 4,
+  },
+  progressBarFillMed: {
+    backgroundColor: '#8B5CF6',
   },
   progressBarFillCompleted: {
     backgroundColor: '#10B981',

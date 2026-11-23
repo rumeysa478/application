@@ -102,22 +102,23 @@ export const resolveActiveModel = async () => {
 };
 
 /**
- * Çekilen fotoğrafta su bardağı, şişe, matara veya içecek kabı olup olmadığını
- * Gemini Vision API (gemini-2.5-flash) ile analiz eder.
+ * Çekilen fotoğrafta belirtilen alışkanlık türüne uygun nesne olup olmadığını
+ * Gemini Vision API (gemini-3.5-flash-lite / fallback modeller) ile analiz eder.
+ *
+ * KURAL 3:
+ * - Su ('water'): Su bardağı, şişe, matara, kupa, termos veya içecek kabı tespiti.
+ * - İlaç ('medication'): İlaç kutusu, blister tablet şeridi, hap/kapsül, şurup şişesi veya hap+kaşık tespiti.
  *
  * 1. API anahtarı URL path/query'sine konulmaz; 'x-goog-api-key' başlığı kullanılır.
- * 2. 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
- *    uç noktasına POST isteği atılır.
- * 3. İstek gövdesinde 'inline_data: { mime_type: "image/jpeg", data: base64String }' gönderilir.
- * 4. Model yanıtı '{"isValidContainer": boolean, "reason": string}' JSON formatında döner;
- *    JSON dönmezse metindeki olumlu/olumsuz ifadeler güvenli fallback ile ayrıştırılır.
- * 5. response.ok değilse hata gövdesi loglanır ve kullanıcıya '[Model: gemini-2.5-flash]' içeren
- *    anlaşılır mesaj gösterilir.
+ * 2. İstek gövdesinde 'inline_data: { mime_type: "image/jpeg", data: base64String }' gönderilir.
+ * 3. Model yanıtı JSON olarak alınır; alınamazsa güvenli metin analizi ile ayrıştırılır.
  *
  * @param {string} base64Image - Fotoğrafın Base64 verisi
+ * @param {'water'|'medication'} [habitType='water'] - Alışkanlık türü
  * @returns {Promise<{
  *   success: boolean,
  *   containsWaterContainer: boolean,
+ *   isValidProof: boolean,
  *   detectedObject?: string,
  *   reason?: string,
  *   message: string,
@@ -125,17 +126,18 @@ export const resolveActiveModel = async () => {
  *   isNetworkError?: boolean
  * }>}
  */
-export const analyzeImageForWaterContainer = async (base64Image) => {
-  const apiKey = (await getStoredApiKey() || '').trim();
+export const analyzeProofImage = async (base64Image, habitType = 'water') => {
+  const isMedication = habitType === 'medication';
+  const apiKey = ((await getStoredApiKey()) || '').trim();
 
   // API anahtarı tanımlanmamışsa
   if (!apiKey) {
     return {
       success: false,
       containsWaterContainer: false,
+      isValidProof: false,
       isApiKeyMissing: true,
-      message:
-        `Yapay zekâ API anahtarı girilmedi [Model: ${TARGET_MODEL}]. Lütfen bir Gemini API anahtarı girin veya manuel doğrulama ile devam edin.`,
+      message: `Yapay zekâ API anahtarı girilmedi [Model: ${TARGET_MODEL}]. Lütfen bir Gemini API anahtarı girin veya manuel doğrulama ile devam edin.`,
     };
   }
 
@@ -148,6 +150,7 @@ export const analyzeImageForWaterContainer = async (base64Image) => {
     return {
       success: false,
       containsWaterContainer: false,
+      isValidProof: false,
       isNetworkError: true,
       message: `Fotoğraf verisi (base64) okunamadı [Model: ${TARGET_MODEL}]. Lütfen tekrar deneyin.`,
     };
@@ -156,8 +159,14 @@ export const analyzeImageForWaterContainer = async (base64Image) => {
   // AsyncStorage içindeki eski model kalıntılarını temizle ve hedef modeli garantile
   await resolveActiveModel();
 
-  // İstek gövdesi: inline_data ile görüntüyü gönder
-  const promptText = `Görseli incele. Bu fotoğrafta bir su şişesi, su bardağı, matara, termos, kupa, sürahi veya herhangi bir su/içecek kabı var mı?
+  // KURAL 3: Alışkanlık türüne göre dinamik Vision Prompt oluşturma
+  const promptText = isMedication
+    ? `Görseli incele. Bu fotoğrafta bir ilaç kutusu, reçeteli ilaç ambalajı, blister ambalaj (tablet/kapsül şeridi), hap, kapsül, tablet, şurup şişesi, damla veya bir ilaçla birlikte kullanılan bardak/kaşık var mı?
+SADECE aşağıdaki JSON formatında yanıt ver, markdown backtick (\`\`\`json) veya ek açıklama yazma:
+{"isValidContainer": true, "reason": "Fotoğrafta ilaç kutusu/tableti tespit edildi"}
+veya ilaç/kutu yoksa:
+{"isValidContainer": false, "reason": "Karede ilaç kutusu, blister veya hap tespit edilemedi"}`
+    : `Görseli incele. Bu fotoğrafta bir su şişesi, su bardağı, matara, termos, kupa, sürahi veya herhangi bir su/içecek kabı var mı?
 SADECE aşağıdaki JSON formatında yanıt ver, markdown backtick (\`\`\`json) veya ek açıklama yazma:
 {"isValidContainer": true, "reason": "Fotoğrafta su bardağı/şişesi tespit edildi"}
 veya içecek kabı yoksa:
@@ -219,6 +228,7 @@ veya içecek kabı yoksa:
         return {
           success: false,
           containsWaterContainer: false,
+          isValidProof: false,
           isNetworkError: true,
           message: `Gemini API Hatası [Model: ${model}] (${parsedMsg}). Lütfen API anahtarınızı veya izinlerinizi kontrol edin.`,
         };
@@ -227,83 +237,97 @@ veya içecek kabı yoksa:
       // Başarılı!
       await AsyncStorage.setItem(CACHED_MODEL_KEY, model);
 
-    const data = await response.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // Markdown ```json bloklarını temizle
-    const cleanJson = rawText
-      .replace(/```json/gi, '')
-      .replace(/```/g, '')
-      .trim();
+      // Markdown ```json bloklarını temizle
+      const cleanJson = rawText
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
 
-    // 1. JSON olarak ayrıştırmayı dene
-    let parsed = null;
-    try {
-      parsed = JSON.parse(cleanJson);
-    } catch (jsonErr) {
-      // Regex ile JSON blok bulma
-      const jsonMatch = rawText.match(/\{[\s\S]*"isValidContainer"[\s\S]*\}/i);
-      if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[0]);
-        } catch {}
-      }
-    }
-
-    // 2. Güvenli Olumlu/Olumsuz Ayrıştırma (JSON dönmezse metin analizi fallback)
-    let isValid = false;
-    let reason = '';
-
-    if (parsed && typeof parsed.isValidContainer === 'boolean') {
-      isValid = parsed.isValidContainer;
-      reason = parsed.reason || (isValid ? 'Su kabı tespit edildi' : 'Su kabı tespit edilemedi');
-    } else {
-      console.warn(`[Model: ${TARGET_MODEL}] JSON ayrıştırılamadı, metin analizi fallback çalıştırılıyor:`, rawText);
-      const lower = rawText.toLowerCase();
-
-      if (lower.includes('"isvalidcontainer": true') || lower.includes('"isvalidcontainer":true')) {
-        isValid = true;
-        reason = 'Fotoğrafta su kabı tespit edildi.';
-      } else if (lower.includes('"isvalidcontainer": false') || lower.includes('"isvalidcontainer":false')) {
-        isValid = false;
-        reason = 'Karede su kabı tespit edilemedi.';
-      } else {
-        const positiveWords = ['su bardağı', 'su şişesi', 'matara', 'termos', 'kupa', 'bardak', 'şişe', 'tespit edildi', 'evet', 'true'];
-        const negativeWords = ['tespit edilemedi', 'bulunamadı', 'yok', 'hayır', 'false'];
-
-        const hasPositive = positiveWords.some((w) => lower.includes(w));
-        const hasNegative = negativeWords.some((w) => lower.includes(w));
-
-        if (hasNegative && !lower.includes('tespit edildi')) {
-          isValid = false;
-          reason = 'Karede su kabı tespit edilemedi.';
-        } else if (hasPositive) {
-          isValid = true;
-          reason = 'Fotoğrafta su kabı başarıyla tespit edildi.';
-        } else {
-          isValid = false;
-          reason = 'Görüntüde net bir su kabı doğrulanamadı.';
+      // 1. JSON olarak ayrıştırmayı dene
+      let parsed = null;
+      try {
+        parsed = JSON.parse(cleanJson);
+      } catch (jsonErr) {
+        // Regex ile JSON blok bulma
+        const jsonMatch = rawText.match(/\{[\s\S]*"(?:isValidContainer|isValidProof)"[\s\S]*\}/i);
+        if (jsonMatch) {
+          try {
+            parsed = JSON.parse(jsonMatch[0]);
+          } catch {}
         }
       }
+
+      // 2. Güvenli Olumlu/Olumsuz Ayrıştırma (JSON dönmezse metin analizi fallback)
+      let isValid = false;
+      let reason = '';
+
+      const jsonVal = parsed?.isValidContainer ?? parsed?.isValidProof;
+      if (parsed && typeof jsonVal === 'boolean') {
+        isValid = jsonVal;
+        reason = parsed.reason || (isValid
+          ? (isMedication ? 'İlaç/kutu başarıyla tespit edildi' : 'Su kabı tespit edildi')
+          : (isMedication ? 'İlaç/kutu tespit edilemedi' : 'Su kabı tespit edilemedi'));
+      } else {
+        console.warn(`[Model: ${model}] JSON ayrıştırılamadı, metin analizi fallback çalıştırılıyor:`, rawText);
+        const lower = rawText.toLowerCase();
+
+        if (lower.includes('"isvalidcontainer": true') || lower.includes('"isvalidcontainer":true') || lower.includes('"isvalidproof": true') || lower.includes('"isvalidproof":true')) {
+          isValid = true;
+          reason = isMedication ? 'Fotoğrafta ilaç/kutu tespit edildi.' : 'Fotoğrafta su kabı tespit edildi.';
+        } else if (lower.includes('"isvalidcontainer": false') || lower.includes('"isvalidcontainer":false') || lower.includes('"isvalidproof": false') || lower.includes('"isvalidproof":false')) {
+          isValid = false;
+          reason = isMedication ? 'Karede ilaç veya kutu tespit edilemedi.' : 'Karede su kabı tespit edilemedi.';
+        } else {
+          const positiveWords = isMedication
+            ? ['ilaç', 'hap', 'tablet', 'kapsül', 'blister', 'şurup', 'reçete', 'kutu', 'ambalaj', 'prospektüs', 'tespit edildi', 'evet', 'true']
+            : ['su bardağı', 'su şişesi', 'matara', 'termos', 'kupa', 'bardak', 'şişe', 'tespit edildi', 'evet', 'true'];
+          const negativeWords = ['tespit edilemedi', 'bulunamadı', 'yok', 'hayır', 'false'];
+
+          const hasPositive = positiveWords.some((w) => lower.includes(w));
+          const hasNegative = negativeWords.some((w) => lower.includes(w));
+
+          if (hasNegative && !lower.includes('tespit edildi')) {
+            isValid = false;
+            reason = isMedication ? 'Karede ilaç veya kutu tespit edilemedi.' : 'Karede su kabı tespit edilemedi.';
+          } else if (hasPositive) {
+            isValid = true;
+            reason = isMedication ? 'Fotoğrafta ilaç/tablet başarıyla tespit edildi.' : 'Fotoğrafta su kabı başarıyla tespit edildi.';
+          } else {
+            isValid = false;
+            reason = isMedication ? 'Görüntüde net bir ilaç veya ambalaj doğrulanamadı.' : 'Görüntüde net bir su kabı doğrulanamadı.';
+          }
+        }
+      }
+
+      return {
+        success: true,
+        containsWaterContainer: isValid,
+        isValidProof: isValid,
+        detectedObject: reason,
+        reason: reason,
+        message: reason,
+      };
+    } catch (netErr) {
+      console.error(`Gemini Vision API [Model: ${model}] ağ çağrısı istisnası:`, netErr);
+      lastErrorDetail = `${model}: ${netErr.message || 'Ağ bağlantı hatası'}`;
     }
-
-    return {
-      success: true,
-      containsWaterContainer: isValid,
-      detectedObject: reason,
-      reason: reason,
-      message: reason,
-    };
-  } catch (netErr) {
-    console.error(`Gemini Vision API [Model: ${model}] ağ çağrısı istisnası:`, netErr);
-    lastErrorDetail = `${model}: ${netErr.message || 'Ağ bağlantı hatası'}`;
   }
-}
 
-return {
-  success: false,
-  containsWaterContainer: false,
-  isNetworkError: true,
-  message: `Gemini Vision API bağlantısı sağlanamadı [Model: ${TARGET_MODEL}] (${lastErrorDetail}). Lütfen internetinizi ve API anahtarınızı kontrol edin.`,
+  return {
+    success: false,
+    containsWaterContainer: false,
+    isValidProof: false,
+    isNetworkError: true,
+    message: `Gemini Vision API bağlantısı sağlanamadı [Model: ${TARGET_MODEL}] (${lastErrorDetail}). Lütfen internetinizi ve API anahtarınızı kontrol edin.`,
+  };
 };
+
+/**
+ * Geriye dönük uyumluluk alias'ı: Su kabı analizi
+ */
+export const analyzeImageForWaterContainer = async (base64Image) => {
+  return analyzeProofImage(base64Image, 'water');
 };
