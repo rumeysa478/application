@@ -745,9 +745,9 @@ const styles = StyleSheet.create({
     color: '#4338CA',
   },
   saveButton: {
-    backgroundColor: '#4F46E5',
-    borderRadius: 14,
-    paddingVertical: 15,
+    backgroundColor: '#FFD166',
+    borderRadius: 9999,
+    paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 10,
@@ -757,9 +757,10 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   saveButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
+    color: '#FF8500',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.3,
   },
   // Tür Rozeti
   typeBadgeRow: {
@@ -767,28 +768,26 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   typeBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 9999,
   },
   typeBadgeWater: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
+    backgroundColor: '#99E5F2',
   },
   typeBadgeMed: {
-    backgroundColor: '#F5F3FF',
-    borderColor: '#DDD6FE',
+    backgroundColor: '#F8A5A5',
   },
   typeBadgeText: {
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '900',
+    color: '#000000',
   },
   typeBadgeTextWater: {
-    color: '#1D4ED8',
+    color: '#000000',
   },
   typeBadgeTextMed: {
-    color: '#6D28D9',
+    color: '#000000',
   },
   // İlaç Doz Saatleri
   addDoseButton: {

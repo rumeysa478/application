@@ -218,7 +218,7 @@ export default function AddHabitScreen({ navigation }) {
           <TouchableOpacity
             style={[
               styles.typeTabButton,
-              habitType === 'water' && styles.typeTabButtonActive,
+              habitType === 'water' && styles.typeTabButtonActiveWater,
             ]}
             onPress={() => {
               setHabitType('water');
@@ -240,7 +240,7 @@ export default function AddHabitScreen({ navigation }) {
           <TouchableOpacity
             style={[
               styles.typeTabButton,
-              habitType === 'medication' && styles.typeTabButtonActive,
+              habitType === 'medication' && styles.typeTabButtonActiveMed,
             ]}
             onPress={() => {
               setHabitType('medication');
@@ -887,52 +887,56 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   saveButton: {
-    backgroundColor: '#4F46E5',
-    borderRadius: 14,
-    paddingVertical: 15,
+    backgroundColor: '#FFD166',
+    borderRadius: 9999,
+    paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,
+    marginTop: 8,
+    marginBottom: 24,
   },
   saveButtonDisabled: {
     opacity: 0.6,
   },
   saveButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
+    color: '#FF8500',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.3,
   },
   // Tür Seçici Segment
   typeSelectorContainer: {
     flexDirection: 'row',
-    backgroundColor: '#E2E8F0',
-    borderRadius: 14,
-    padding: 4,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 9999,
+    padding: 5,
     marginBottom: 20,
-    gap: 6,
+    gap: 8,
   },
   typeTabButton: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 10,
+    borderRadius: 9999,
   },
-  typeTabButtonActive: {
-    backgroundColor: '#FFFFFF',
+  typeTabButtonActiveWater: {
+    backgroundColor: '#99E5F2',
     elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
+  },
+  typeTabButtonActiveMed: {
+    backgroundColor: '#F8A5A5',
+    elevation: 2,
   },
   typeTabText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '800',
     color: '#64748B',
   },
   typeTabTextActive: {
-    color: '#4F46E5',
-    fontWeight: '700',
+    color: '#000000',
+    fontWeight: '900',
   },
   // İlaç Doz Saatleri
   sectionHeaderRow: {

@@ -26,11 +26,11 @@ export default function LivingWidget({
 
   return (
     <View style={styles.card}>
-      {/* Üst Başlık ve Pazar / Paylaşım Butonları */}
+      {/* Üst Başlık ve Aksiyon Rozetleri */}
       <View style={styles.header}>
         <View style={styles.headerTitleRow}>
           <Text style={styles.headerTitle}>
-            {isWaterTheme ? '🌱 Yaşayan Çiçek' : '🧸 İyileşme Maskotu'}
+            {isWaterTheme ? '🌱 Yasayan Çiçek' : '🧸 Şifa Maskotu'}
           </Text>
           <View style={styles.tierBadge}>
             <Text style={styles.tierBadgeText}>{tier.name}</Text>
@@ -80,7 +80,7 @@ export default function LivingWidget({
         />
       )}
 
-      {/* Alt Hızlı Aksiyon */}
+      {/* Alt Hızlı Aksiyon (Kanıt Ekle / Sula) */}
       {onQuickWater && (
         <TouchableOpacity
           style={styles.quickWaterBtn}
@@ -89,8 +89,8 @@ export default function LivingWidget({
         >
           <Text style={styles.quickWaterText}>
             {isWaterTheme
-              ? '💧 Sula & Büyüt (Kanıt Ekle)'
-              : '💊 Şifa Ver & İyileştir (Doz Ekle)'}
+              ? '⭐📸 su iç ve büyüt'
+              : '⭐📸 ilaç al ve iyileştir'}
           </Text>
         </TouchableOpacity>
       )}
@@ -100,25 +100,23 @@ export default function LivingWidget({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
+    backgroundColor: '#7ED957',
+    borderRadius: 28,
+    padding: 18,
     marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E0E7FF',
-    shadowColor: '#4F46E5',
+    marginTop: 8,
+    marginBottom: 16,
+    elevation: 3,
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
     shadowRadius: 10,
-    elevation: 3,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   headerTitleRow: {
     flexDirection: 'row',
@@ -126,65 +124,61 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#1E1B4B',
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#000000',
+    letterSpacing: -0.3,
   },
   tierBadge: {
-    backgroundColor: '#EEF2FF',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
+    backgroundColor: '#A8F368',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 9999,
   },
   tierBadgeText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#4F46E5',
+    fontWeight: '800',
+    color: '#000000',
   },
   headerActions: {
     flexDirection: 'row',
     gap: 6,
   },
   shareToggleBtn: {
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: '#A8F368',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 9999,
   },
   shareToggleBtnText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#16A34A',
+    fontWeight: '800',
+    color: '#000000',
   },
   shopButton: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
+    backgroundColor: '#A8F368',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingVertical: 5,
+    borderRadius: 9999,
   },
   shopButtonText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
+    fontWeight: '800',
+    color: '#000000',
   },
   quickWaterBtn: {
-    marginTop: 8,
-    backgroundColor: '#EEF2FF',
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
-    borderRadius: 12,
-    paddingVertical: 9,
+    marginTop: 10,
+    backgroundColor: '#FFD166',
+    borderRadius: 9999,
+    height: 48,
     alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
   },
   quickWaterText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#4338CA',
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#FF8500',
+    letterSpacing: 0.3,
   },
 });

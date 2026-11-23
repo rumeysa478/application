@@ -32,6 +32,7 @@ import {
 import { getStoredApiKey, setStoredApiKey, testApiKey } from '../services/visionAi';
 import { getUserProfile } from '../services/userService';
 import LivingWidget from '../components/LivingWidget';
+import THEME from '../theme/theme';
 
 export default function HomeScreen({ navigation }) {
   const [habits, setHabits] = useState([]);
@@ -110,7 +111,7 @@ export default function HomeScreen({ navigation }) {
     if (!isWithinActiveHours(item)) {
       Alert.alert(
         '💤 Uyku Modu',
-        `"${item.title}" şu an aktif çalışma saatleri (${getTodayHoursText(item)}) dışındadır. Uyku vaktinde bildirimler ve alarmlar sessize alınır.`
+        `"${item.title}" şu an aktif çalışma saatleri (${getTodayHoursText(item)}) dışındadır. Uyku vaktinde bildirimler sessize alınır.`
       );
       return;
     }
@@ -149,52 +150,39 @@ export default function HomeScreen({ navigation }) {
     const proofTargetText = isMedication ? 'ilaç kutusu veya tablet' : 'su bardağı';
 
     Alert.alert(
-      '🚨 ZORUNLU MOD BAŞLATILDI!',
-      `"${item.title}" için 3/3 erteleme hakkınız doldu!\n\nKamera ile ${proofTargetText} kanıtı onaylanana kadar titreşim uyarısı devam edecektir.`,
+      '🚨 ZORUNLU KANIT MODU!',
+      `3 erteleme hakkınız doldu! Telefonunuz bir ${proofTargetText} fotoğrafı çekip yapay zekâya onaylatana kadar titremeye devam edecektir.`,
       [
         {
-          text: '📸 Kanıt Fotoğrafı Çek',
-          onPress: () => handleOpenProofCamera(item),
+          text: '📸 Hemen Kanıtla & Sustur',
+          onPress: () => handleOpenProofCamera(item, 'mandatory'),
         },
-      ]
+      ],
+      { cancelable: false }
     );
   };
 
-  // Kamera Kanıt Ekranına Yönlendirme (Zorunlu vs. Ek Kanıt desteği)
+  // Kamera Kanıt Ekranına Yönlendirme (Zorunlu veya Ek Kanıt)
   const handleOpenProofCamera = (item, proofType = 'mandatory') => {
-    stopVibration();
-    if (activeAlertHabit && activeAlertHabit.id === item.id) {
-      setActiveAlertHabit(null);
-    }
-    const currentSnooze = item.snoozeCount || 0;
-    const zeroSnooze = currentSnooze === 0;
-    const onTime = currentSnooze === 0;
-
+    const isMedication = item.type === 'medication';
     navigation.navigate('CameraProof', {
       habitId: item.id,
       habitTitle: item.title,
-      habitType: item.type || 'water',
-      portionLiters: item.portionLiters || 0.25,
-      targetDoses: item.targetDoses,
-      dosesToday: item.dosesToday,
+      habitType: isMedication ? 'medication' : 'water',
+      portionLiters: Number(item.portionLiters) || 0.25,
       proofType,
-      zeroSnooze,
-      onTime,
-      currentSnooze,
+      zeroSnooze: (item.snoozeCount || 0) === 0,
+      onTime: isWithinActiveHours(item),
     });
   };
 
-  // Hızlı Kanıt Yükleme Eylemi (Doğrudan ana ekrandan - Ek Kanıt)
+  // Her An Hızlı Kanıt Ekle
   const handleQuickProof = () => {
-    const targetHabit = habits.find((h) => h.dailyTargetLiters) || habits[0];
-    if (targetHabit) {
-      handleOpenProofCamera(targetHabit, 'extra');
+    const waterHabit = habits.find((h) => h.type === 'water' || !h.type) || habits[0];
+    if (waterHabit) {
+      handleOpenProofCamera(waterHabit, 'extra');
     } else {
-      Alert.alert(
-        'Alışkanlık Bulunamadı',
-        'Öncelikle su hedefinizi belirlemek için yeni bir alışkanlık oluşturun.',
-        [{ text: 'Yeni Ekle', onPress: () => navigation.navigate('AddHabit') }]
-      );
+      navigation.navigate('AddHabit');
     }
   };
 
@@ -254,7 +242,7 @@ export default function HomeScreen({ navigation }) {
       await sendInstantNotification('Habitime Su Hatırlatıcısı');
       Alert.alert(
         '🔔 Bildirim Gönderildi',
-        'Bildirim merkezini / kilit ekranınızı kontrol edin. Rastgele bir "Biliyor muydunuz?" bilgisi içerir.'
+        'Bildirim merkezini / kilit ekranınızı kontrol edin.'
       );
     } catch (error) {
       Alert.alert('Bildirim Hatası', 'Bildirim izni verilmemiş olabilir.');
@@ -309,166 +297,172 @@ export default function HomeScreen({ navigation }) {
     const isWorkingHours = isWithinActiveHours(item);
     const snoozeDurationText = isMedication ? '15 dk' : '30 dk';
 
-    const snoozeBadgeColor =
-      remainingSnooze === 0
-        ? '#EF4444'
-        : remainingSnooze === 1
-        ? '#F59E0B'
-        : '#10B981';
-
     return (
-      <View style={[styles.card, isAlertActive && styles.cardInAlert]}>
+      <View
+        style={[
+          styles.card,
+          isMedication ? styles.medCard : styles.waterCard,
+          isAlertActive && styles.cardInAlert,
+        ]}
+      >
         {/* Kart Başlığı ve Eylem İkonları */}
         <View style={styles.cardHeader}>
-          <View style={styles.titleContainer}>
-            <View style={styles.titleWithBadgeRow}>
-              <Text style={styles.habitTitle}>{item.title}</Text>
-              <View style={[styles.typeMiniTag, isMedication ? styles.typeMiniTagMed : styles.typeMiniTagWater]}>
-                <Text style={[styles.typeMiniTagText, isMedication ? styles.typeMiniTagTextMed : styles.typeMiniTagTextWater]}>
-                  {isMedication ? '💊 İLAÇ' : '💧 SU'}
-                </Text>
-              </View>
+          <View style={styles.headerLeftGroup}>
+            {/* Dairesel İkon Rozeti */}
+            <View
+              style={[
+                styles.iconCircle,
+                isMedication ? styles.medIconCircle : styles.waterIconCircle,
+              ]}
+            >
+              <Text style={styles.iconCircleEmoji}>
+                {isMedication ? '💊' : '💧'}
+              </Text>
             </View>
 
-            <Text style={styles.intervalText}>
-              {isMedication
-                ? `💊 Günde ${targetDoses} Doz • Saatler: ${(item.medicationTimes || []).join(', ') || 'Belirtilmedi'}`
-                : `⏱️ Her ${item.intervalMinutes} dk • Hedef: ${targetLiters} L / gün`}
-            </Text>
+            <View style={styles.titleInfoColumn}>
+              <Text style={styles.cardHeadline}>
+                {isMedication ? 'İLAÇ İÇ' : 'SU İÇ'}
+              </Text>
+              <Text style={styles.intervalSubtext}>
+                {isMedication
+                  ? `günde ${targetDoses} doz • ${item.title}`
+                  : `hedef: ${targetLiters.toFixed(2)} L • ${item.title}`}
+              </Text>
+            </View>
           </View>
 
+          {/* Dairesel Aksiyon İkonları (Düzenle & Sil) */}
           <View style={styles.headerActions}>
             <TouchableOpacity
-              style={styles.actionIconBtn}
+              style={[
+                styles.actionCircleBtn,
+                isMedication ? styles.medActionCircle : styles.waterActionCircle,
+              ]}
               onPress={() => handleEditHabit(item)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Text style={styles.actionIconText}>✏️</Text>
+              <Text style={styles.actionCircleText}>✏️</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.actionIconBtn}
+              style={[
+                styles.actionCircleBtn,
+                isMedication ? styles.medActionCircle : styles.waterActionCircle,
+              ]}
               onPress={() => handleDelete(item.id, item.title)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Text style={styles.actionIconText}>🗑️</Text>
+              <Text style={styles.actionCircleText}>🗑️</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Günlük İlerleme Çubuğu */}
-        <View style={styles.progressContainer}>
-          <View style={styles.progressHeader}>
-            <Text style={styles.progressLabel}>
-              {isMedication ? (
-                <>
-                  💊 Bugünkü İlaç Dozu:{' '}
-                  <Text style={styles.progressBold}>
-                    {currentDoses} / {targetDoses} Alındı
-                  </Text>
-                </>
-              ) : (
-                <>
-                  💧 Günlük Su Tüketimi:{' '}
-                  <Text style={styles.progressBold}>
-                    {currentIntake.toFixed(2)} / {targetLiters.toFixed(2)} L
-                  </Text>
-                </>
-              )}
+        {/* Çift Tonlu İlerleme Çubuğu & Metrikler */}
+        <View style={styles.progressSection}>
+          <View style={styles.metricRow}>
+            <Text style={styles.metricLabel}>
+              {isMedication
+                ? `günlük ilaç tüketimi: ${currentDoses} / ${targetDoses}`
+                : `günlük su tüketimi: ${currentIntake.toFixed(2)} / ${targetLiters.toFixed(2)} L`}
             </Text>
             <Text
               style={[
-                styles.percentageText,
-                isGoalCompleted && styles.percentageTextSuccess,
+                styles.percentText,
+                isMedication ? styles.medPercentText : styles.waterPercentText,
               ]}
             >
               %{percentage}
             </Text>
           </View>
 
-          {/* İlerleme Çubuğu */}
-          <View style={styles.progressBarBackground}>
+          {/* İlerleme Çubuğu Kanalı (Track) ve Dolgusu (Fill) */}
+          <View
+            style={[
+              styles.progressTrack,
+              isMedication ? styles.medProgressTrack : styles.waterProgressTrack,
+            ]}
+          >
             <View
               style={[
-                styles.progressBarFill,
-                isMedication && styles.progressBarFillMed,
+                styles.progressFill,
+                isMedication ? styles.medProgressFill : styles.waterProgressFill,
                 { width: `${percentage}%` },
-                isGoalCompleted && styles.progressBarFillCompleted,
               ]}
             />
           </View>
         </View>
 
-        {/* Bilgilendirme Rozetleri */}
+        {/* Bilgilendirme Rozetleri (Hap Formatında) */}
         <View style={styles.badgesRow}>
           <View
             style={[
-              styles.badge,
-              isWorkingHours ? styles.activeHoursBadge : styles.sleepHoursBadge,
+              styles.pillBadge,
+              isMedication ? styles.medPillBadge : styles.waterPillBadge,
             ]}
           >
             <Text
               style={[
-                styles.badgeText,
-                isWorkingHours
-                  ? styles.activeHoursBadgeText
-                  : styles.sleepHoursBadgeText,
+                styles.pillBadgeText,
+                isMedication ? styles.medPillBadgeText : styles.waterPillBadgeText,
               ]}
             >
               {isWorkingHours
-                ? `🕒 ${getTodayHoursText(item)}`
-                : `💤 Uyku Modu (${getTodayHoursText(item)})`}
+                ? `${getTodayHoursText(item)}`
+                : `💤 uyku modu (${getTodayHoursText(item)})`}
             </Text>
           </View>
+
+          {item.lastProofAt && (
+            <View
+              style={[
+                styles.pillBadge,
+                isMedication ? styles.medPillBadge : styles.waterPillBadge,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pillBadgeText,
+                  isMedication ? styles.medPillBadgeText : styles.waterPillBadgeText,
+                ]}
+              >
+                son kanıt: {formatProofTime(item.lastProofAt)}
+              </Text>
+            </View>
+          )}
 
           {!isGoalCompleted && (
             <View
               style={[
-                styles.badge,
-                {
-                  backgroundColor: snoozeBadgeColor + '20',
-                  borderColor: snoozeBadgeColor,
-                },
+                styles.pillBadge,
+                isMedication ? styles.medSnoozeBadge : styles.waterSnoozeBadge,
               ]}
             >
-              <Text style={[styles.badgeText, { color: snoozeBadgeColor }]}>
-                ⏳ Erteleme: {currentSnooze}/{maxSnooze} ({snoozeDurationText})
+              <Text
+                style={[
+                  styles.pillBadgeText,
+                  isMedication ? styles.medSnoozeBadgeText : styles.waterSnoozeBadgeText,
+                ]}
+              >
+                ertele: {currentSnooze}/{maxSnooze}
               </Text>
             </View>
           )}
 
           {isGoalCompleted && (
-            <View style={[styles.badge, styles.completedBadge]}>
-              <Text style={styles.completedBadgeText}>
-                {isMedication ? '✓ Bugünün Dozları Tamamlandı! 🎉' : '✓ Günlük Hedefe Ulaşıldı! 🎉'}
+            <View style={[styles.pillBadge, styles.completedPillBadge]}>
+              <Text style={styles.completedPillBadgeText}>
+                ✓ tamamlandı! 🎉
               </Text>
-            </View>
-          )}
-
-          {item.lastProofAt && (
-            <View style={[styles.badge, styles.timeBadge]}>
-              <Text style={styles.timeBadgeText}>
-                ✓ Son Kanıt: {formatProofTime(item.lastProofAt)}
-              </Text>
-            </View>
-          )}
-
-          {isAlertActive && (
-            <View style={[styles.badge, styles.alertBadge]}>
-              <Text style={styles.alertBadgeText}>🚨 ZORUNLU MOD AKTİF</Text>
             </View>
           )}
         </View>
 
-        {/* Aksiyon Butonları (Her an ek kanıt yükleme aktif) */}
+        {/* Alt Aksiyon Butonları (Tam Pill & Güneş Sarısı Zemin) */}
         <View style={styles.actionButtonsRow}>
-          {/* Her An Kanıt Ekle Butonu */}
+          {/* ⭐📸 Kanıt Ekle Butonu */}
           <TouchableOpacity
-            style={[
-              styles.actionButton,
-              styles.kanitlaButton,
-              isAlertActive && styles.kanitlaAlertButton,
-            ]}
-            activeOpacity={0.7}
+            style={styles.actionButtonYellow}
+            activeOpacity={0.8}
             onPress={() =>
               handleOpenProofCamera(
                 item,
@@ -476,46 +470,37 @@ export default function HomeScreen({ navigation }) {
               )
             }
           >
-            <Text style={styles.kanitlaButtonText}>
-              {isAlertActive
-                ? '📸 Sustur & Fotoğraf Çek'
-                : isMedication
-                ? isGoalCompleted
-                  ? `📸 Ekstra Doz Kanıtla (${currentDoses}/${targetDoses})`
-                  : `📸 İlaç Kanıtı Ekle (${currentDoses}/${targetDoses} Doz)`
-                : isGoalCompleted
-                ? `📸 Ekstra Su Ekle (+${Math.round((item.portionLiters || 0.25) * 1000)}ml)`
-                : `📸 Kanıt Ekle (+${Math.round((item.portionLiters || 0.25) * 1000)}ml)`}
-            </Text>
+            <Text style={styles.actionTextOrange}>⭐📸 kanıt ekle</Text>
           </TouchableOpacity>
 
-          {/* Erteleme Butonu veya Sıfırla */}
+          {/* ⏳ Ertele Butonu veya Sıfırla */}
           {isGoalCompleted ? (
             <TouchableOpacity
-              style={styles.resetSmallButton}
+              style={styles.actionButtonYellow}
               activeOpacity={0.8}
               onPress={() => handleReset(item)}
             >
-              <Text style={styles.resetSmallButtonText}>🔄 Sıfırla</Text>
+              <Text style={styles.actionTextBrown}>🔄 sıfırla</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={[
-                styles.actionButton,
-                remainingSnooze === 0
-                  ? styles.erteleDisabledButton
-                  : styles.erteleButton,
+                styles.actionButtonYellow,
+                remainingSnooze === 0 && styles.actionButtonDisabled,
               ]}
-              activeOpacity={0.7}
+              activeOpacity={0.8}
               onPress={() => handleSnooze(item)}
+              disabled={remainingSnooze === 0}
             >
               <Text
                 style={[
-                  styles.erteleButtonText,
-                  remainingSnooze === 0 && styles.erteleDisabledButtonText,
+                  styles.actionTextBrown,
+                  remainingSnooze === 0 && styles.actionTextDisabled,
                 ]}
               >
-                {remainingSnooze === 0 ? '🚨 Hak Bitti' : `⏳ Ertele (${snoozeDurationText})`}
+                {remainingSnooze === 0
+                  ? '🚨 hak bitti'
+                  : `⏳ ertele (${snoozeDurationText})`}
               </Text>
             </TouchableOpacity>
           )}
@@ -526,48 +511,44 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Üst Sosyal & Profil Çubuğu */}
-      <View style={styles.topProfileBar}>
+      {/* 6.1 Üst Bar (Header & Top Chrome) */}
+      <View style={styles.topHeader}>
+        {/* Sol: Siyah Dairesel Avatar Çerçevesi */}
         <TouchableOpacity
-          style={styles.profileInfoGroup}
+          style={styles.avatarCircleBlack}
           activeOpacity={0.8}
           onPress={() => navigation.navigate('Profile')}
         >
-          <Text style={styles.profileAvatar}>{profile?.avatar || '🌟'}</Text>
-          <View>
-            <Text style={styles.profileUsername}>{profile?.username || 'Habitime'}</Text>
-            <View style={styles.scoreRow}>
-              <Text style={styles.scorePillText}>🪙 {profile?.totalScore || 0} Puan</Text>
-              {profile?.isDoublePointsActiveToday && (
-                <View style={styles.multiplierBadge}>
-                  <Text style={styles.multiplierText}>🔥 2x</Text>
-                </View>
-              )}
-            </View>
-          </View>
+          <Text style={styles.avatarEmoji}>{profile?.avatar || '🌟'}</Text>
         </TouchableOpacity>
 
-        {/* Üst Navigasyon Butonları */}
-        <View style={styles.navButtonsRow}>
-          <TouchableOpacity
-            style={[styles.navButton, styles.navButtonProfile]}
-            onPress={() => navigation.navigate('Profile')}
-          >
-            <Text style={[styles.navButtonText, styles.navButtonProfileText]}>👤 Profil</Text>
-          </TouchableOpacity>
+        {/* Merkez: HabiTime Başlığı */}
+        <View style={styles.centerBrand}>
+          <Text style={styles.brandTitle}>HabiTime</Text>
+          <View style={styles.scorePillSmall}>
+            <Text style={styles.scorePillSmallText}>🪙 {profile?.totalScore || 0}</Text>
+            {profile?.isDoublePointsActiveToday && (
+              <Text style={styles.multiplierBadgeText}>🔥 2x</Text>
+            )}
+          </View>
+        </View>
 
+        {/* Sağ: İki Dairesel #00C2CB Buton (Pazar & Yarışma) */}
+        <View style={styles.headerRightCircles}>
           <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => navigation.navigate('Leaderboard')}
-          >
-            <Text style={styles.navButtonText}>🏆 Yarışma</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.navButton, styles.navButtonStore]}
+            style={styles.cyanCircleBtn}
+            activeOpacity={0.8}
             onPress={() => navigation.navigate('WidgetShop')}
           >
-            <Text style={[styles.navButtonText, styles.navButtonStoreText]}>🪴 Pazar</Text>
+            <Text style={styles.circleBtnIcon}>🛒</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.cyanCircleBtn}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('Leaderboard')}
+          >
+            <Text style={styles.circleBtnIcon}>🏆</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -580,7 +561,7 @@ export default function HomeScreen({ navigation }) {
               🚨 ZORUNLU MOD: Titreşim Aktif!
             </Text>
             <Text style={styles.alertBannerSubtitle}>
-              "{activeAlertHabit.title}" için 3 erteleme bitti. Su bardağı fotoğrafı onaylanana kadar devam eder.
+              "{activeAlertHabit.title}" için 3 erteleme bitti. Fotoğraf onaylanana kadar titreşim devam eder.
             </Text>
           </View>
           <TouchableOpacity
@@ -592,65 +573,7 @@ export default function HomeScreen({ navigation }) {
         </View>
       )}
 
-      {/* Yaşayan Maskot Widget'ı (Özel Tasarım SVG & Akıcı Animasyonlar) */}
-      <LivingWidget
-        activeWidgetId={
-          profile?.activeWidgetId ||
-          (habits.some((h) => h.type === 'medication') && !habits.some((h) => h.type === 'water' || !h.type)
-            ? 'healer_tier_1'
-            : 'flower_tier_1')
-        }
-        healthPercent={profile?.widgetHealth || 65}
-        progressPercent={
-          Math.min(
-            100,
-            Math.round(
-              ((habits.find((h) => h.type === 'water' || !h.type)?.todayIntakeLiters || 0) /
-                (habits.find((h) => h.type === 'water' || !h.type)?.dailyTargetLiters || 2.5)) *
-                100
-            )
-          )
-        }
-        totalIntake={habits.find((h) => h.type === 'water' || !h.type)?.todayIntakeLiters || 0}
-        targetIntake={habits.find((h) => h.type === 'water' || !h.type)?.dailyTargetLiters || 2.5}
-        dosesToday={habits.find((h) => h.type === 'medication')?.dosesToday || 0}
-        targetDoses={
-          habits.find((h) => h.type === 'medication')?.targetDoses ||
-          habits.find((h) => h.type === 'medication')?.medicationTimes?.length ||
-          2
-        }
-        onOpenShop={() => navigation.navigate('WidgetShop')}
-        onQuickWater={handleQuickProof}
-      />
-
-      {/* Her An Hızlı Kanıt Ekleme & Test Çubuğu */}
-      <View style={styles.quickBar}>
-        <TouchableOpacity
-          style={styles.instantProofButton}
-          onPress={handleQuickProof}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.instantProofText}>💧 Her An Kanıt Ekle (+250ml)</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.quickButton}
-          onPress={handleTestNotification}
-        >
-          <Text style={styles.quickButtonText}>🔔 Bildirim</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.quickButton, styles.quickButtonAi]}
-          onPress={() => setShowApiKeyModal(true)}
-        >
-          <Text style={[styles.quickButtonText, styles.quickButtonAiText]}>
-            🔑 AI
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Alışkanlık Listesi */}
+      {/* Alışkanlıklar ve Maskot Listesi */}
       <FlatList
         data={habits}
         keyExtractor={(item) => item.id}
@@ -660,41 +583,104 @@ export default function HomeScreen({ navigation }) {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#4F46E5']}
+            colors={['#00C2CB']}
+            tintColor="#00C2CB"
           />
+        }
+        ListHeaderComponent={
+          <>
+            {/* 6.2 Yaşayan Çiçek / Şifa Maskotu Kartı */}
+            <LivingWidget
+              activeWidgetId={
+                profile?.activeWidgetId ||
+                (habits.some((h) => h.type === 'medication') &&
+                !habits.some((h) => h.type === 'water' || !h.type)
+                  ? 'healer_tier_1'
+                  : 'flower_tier_1')
+              }
+              healthPercent={profile?.widgetHealth || 65}
+              progressPercent={
+                Math.min(
+                  100,
+                  Math.round(
+                    ((habits.find((h) => h.type === 'water' || !h.type)?.todayIntakeLiters || 0) /
+                      (habits.find((h) => h.type === 'water' || !h.type)?.dailyTargetLiters || 2.5)) *
+                      100
+                  )
+                )
+              }
+              totalIntake={habits.find((h) => h.type === 'water' || !h.type)?.todayIntakeLiters || 0}
+              targetIntake={habits.find((h) => h.type === 'water' || !h.type)?.dailyTargetLiters || 2.5}
+              dosesToday={habits.find((h) => h.type === 'medication')?.dosesToday || 0}
+              targetDoses={
+                habits.find((h) => h.type === 'medication')?.targetDoses ||
+                habits.find((h) => h.type === 'medication')?.medicationTimes?.length ||
+                2
+              }
+              onOpenShop={() => navigation.navigate('WidgetShop')}
+              onQuickWater={handleQuickProof}
+            />
+
+            {/* Hızlı Aksiyon & Araç Çubuğu */}
+            <View style={styles.quickBar}>
+              <TouchableOpacity
+                style={styles.quickProofPill}
+                onPress={handleQuickProof}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.quickProofPillText}>⭐📸 her an kanıt ekle (+250ml)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.quickToolBtn}
+                onPress={handleTestNotification}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.quickToolBtnText}>🔔 Bildirim</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.quickToolBtn}
+                onPress={() => setShowApiKeyModal(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.quickToolBtnText}>🔑 AI</Text>
+              </TouchableOpacity>
+            </View>
+          </>
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>💧</Text>
-            <Text style={styles.emptyTitle}>Henüz alışkanlık eklemediniz</Text>
+            <Text style={styles.emptyIcon}>🌱</Text>
+            <Text style={styles.emptyTitle}>Henüz alışkanlık eklenmedi</Text>
             <Text style={styles.emptySubtitle}>
-              Günlük su hedefinizi belirlemek ve yapay zekâ doğrulamasıyla takip etmek için aşağıdaki "+" butonuna dokunun.
+              Sağ alttaki (+) butonuna basarak ilk Su veya İlaç alışkanlığınızı ekleyin.
             </Text>
           </View>
         }
       />
 
-      {/* Sağ alttaki Floating Action Button (+) */}
+      {/* FAB: Yeni Alışkanlık Ekle Butonu */}
       <TouchableOpacity
-        style={styles.fab}
+        style={styles.fabButton}
         activeOpacity={0.85}
         onPress={() => navigation.navigate('AddHabit')}
       >
-        <Text style={styles.fabText}>+</Text>
+        <Text style={styles.fabButtonText}>+</Text>
       </TouchableOpacity>
 
       {/* Gemini API Anahtarı Modalı */}
       <Modal
         visible={showApiKeyModal}
-        transparent
-        animationType="slide"
+        transparent={true}
+        animationType="fade"
         onRequestClose={() => setShowApiKeyModal(false)}
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>🔑 Gemini Vision API Anahtarı</Text>
+            <Text style={styles.modalTitle}>🔑 Gemini Vision API</Text>
             <Text style={styles.modalSubtitle}>
-              Google AI Studio'dan aldığınız ücretsiz Gemini API anahtarını girerek su bardağı/kabı doğrulamasını gerçek yapay zekâ ile gerçekleştirebilirsiniz.
+              Yapay zekâ ile su kabı ve ilaç doğrulaması için Google AI Studio anahtarınızı girin.
             </Text>
 
             <TextInput
@@ -705,6 +691,7 @@ export default function HomeScreen({ navigation }) {
               onChangeText={setInputApiKey}
               autoCapitalize="none"
               autoCorrect={false}
+              secureTextEntry={false}
             />
 
             <View style={styles.modalActions}>
@@ -713,7 +700,9 @@ export default function HomeScreen({ navigation }) {
                 onPress={handleTestKey}
                 disabled={isTestingKey}
               >
-                <Text style={styles.modalTestText}>⚡ Test Et</Text>
+                <Text style={styles.modalTestText}>
+                  {isTestingKey ? 'Test...' : 'Test Et'}
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -722,6 +711,7 @@ export default function HomeScreen({ navigation }) {
               >
                 <Text style={styles.modalCancelText}>Kapat</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.modalSaveBtn}
                 onPress={handleSaveApiKey}
@@ -739,84 +729,355 @@ export default function HomeScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF', // Saf beyaz tuval
   },
-  topProfileBar: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+
+  // 6.1 Header & Top Chrome
+  topHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
   },
-  profileInfoGroup: {
-    flexDirection: 'row',
+  avatarCircleBlack: {
+    width: 44,
+    height: 44,
+    borderRadius: 9999,
+    backgroundColor: '#000000',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'center',
   },
-  profileAvatar: {
+  avatarEmoji: {
+    fontSize: 22,
+  },
+  centerBrand: {
+    alignItems: 'center',
+  },
+  brandTitle: {
     fontSize: 28,
+    fontWeight: '900',
+    color: '#000000',
+    letterSpacing: -0.5,
   },
-  profileUsername: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  scoreRow: {
+  scorePillSmall: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     marginTop: 2,
   },
-  scorePillText: {
+  scorePillSmallText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#D97706',
-  },
-  multiplierBadge: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-  },
-  multiplierText: {
-    fontSize: 10,
     fontWeight: '800',
-    color: '#15803D',
+    color: '#000000',
   },
-  navButtonsRow: {
+  multiplierBadgeText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#EA580C',
+  },
+  headerRightCircles: {
     flexDirection: 'row',
     gap: 8,
   },
-  navButton: {
-    backgroundColor: '#EEF2FF',
+  cyanCircleBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 9999,
+    backgroundColor: '#00C2CB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  circleBtnIcon: {
+    fontSize: 18,
+  },
+
+  // Hızlı Araç Çubuğu
+  quickBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    gap: 8,
+  },
+  quickProofPill: {
+    flex: 2,
+    backgroundColor: '#FFD166',
+    borderRadius: 9999,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickProofPillText: {
+    color: '#FF8500',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  quickToolBtn: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
     borderWidth: 1,
-    borderColor: '#C7D2FE',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
+    borderColor: '#E2E8F0',
+    borderRadius: 9999,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  navButtonText: {
-    color: '#4338CA',
-    fontWeight: '700',
+  quickToolBtnText: {
+    color: '#000000',
     fontSize: 12,
+    fontWeight: '800',
   },
-  navButtonStore: {
-    backgroundColor: '#F0FDF4',
-    borderColor: '#BBF7D0',
+
+  // Liste
+  listContent: {
+    paddingBottom: 100,
   },
-  navButtonStoreText: {
+
+  // Alışkanlık Kartları Ortak
+  card: {
+    borderRadius: 28,
+    padding: 18,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+  },
+  waterCard: {
+    backgroundColor: '#99E5F2', // Pastel Gökyüzü Camgöbeği
+  },
+  medCard: {
+    backgroundColor: '#F8A5A5', // Pastel Mercan Gül
+  },
+  cardInAlert: {
+    borderWidth: 3,
+    borderColor: '#EF4444',
+  },
+
+  // Kart Başlık Satırı
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  headerLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 9999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  waterIconCircle: {
+    backgroundColor: '#00C2CB',
+  },
+  medIconCircle: {
+    backgroundColor: '#F87171',
+  },
+  iconCircleEmoji: {
+    fontSize: 22,
+  },
+  titleInfoColumn: {
+    flex: 1,
+  },
+  cardHeadline: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#000000',
+    letterSpacing: 0.8,
+  },
+  intervalSubtext: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#000000',
+    opacity: 0.75,
+    marginTop: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionCircleBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 9999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  waterActionCircle: {
+    backgroundColor: '#00C2CB',
+  },
+  medActionCircle: {
+    backgroundColor: '#F87171',
+  },
+  actionCircleText: {
+    fontSize: 15,
+  },
+
+  // İlerleme Çubuğu ve Metrikler
+  progressSection: {
+    marginBottom: 12,
+  },
+  metricRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  metricLabel: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#000000',
+  },
+  percentText: {
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  waterPercentText: {
+    color: '#0096C7',
+  },
+  medPercentText: {
+    color: '#F59E0B',
+  },
+
+  // Çift Tonlu İlerleme Çubuğu
+  progressTrack: {
+    height: 18,
+    borderRadius: 9999,
+    overflow: 'hidden',
+  },
+  waterProgressTrack: {
+    backgroundColor: '#003B73', // Derin Gece Mavisi
+  },
+  medProgressTrack: {
+    backgroundColor: '#881337', // Koyu Vişne Bordosu
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 9999,
+  },
+  waterProgressFill: {
+    backgroundColor: '#38BDF8', // Parlak Elektrik Camgöbeği
+  },
+  medProgressFill: {
+    backgroundColor: '#FF6B6B', // Canlı Mercan Kırmızısı
+  },
+
+  // Bilgilendirme Rozetleri
+  badgesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 14,
+  },
+  pillBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 9999,
+  },
+  pillBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  waterPillBadge: {
+    backgroundColor: '#56CFE1',
+  },
+  waterPillBadgeText: {
+    color: '#003B73',
+  },
+  medPillBadge: {
+    backgroundColor: '#F87171',
+  },
+  medPillBadgeText: {
+    color: '#450A0A',
+  },
+  waterSnoozeBadge: {
+    backgroundColor: '#E0AAFF',
+  },
+  waterSnoozeBadgeText: {
+    color: '#7E22CE',
+  },
+  medSnoozeBadge: {
+    backgroundColor: '#FB923C',
+  },
+  medSnoozeBadgeText: {
+    color: '#7C2D12',
+  },
+  completedPillBadge: {
+    backgroundColor: '#C7F974',
+  },
+  completedPillBadgeText: {
     color: '#15803D',
   },
-  navButtonProfile: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#CBD5E1',
+
+  // Eylem Butonları (Güneş Sarısı Zeminli Pill)
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
-  navButtonProfileText: {
-    color: '#334155',
+  actionButtonYellow: {
+    flex: 1,
+    height: 48,
+    backgroundColor: '#FFD166',
+    borderRadius: 9999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
   },
+  actionButtonDisabled: {
+    opacity: 0.6,
+  },
+  actionTextOrange: {
+    color: '#FF8500',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  actionTextBrown: {
+    color: '#78350F',
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  actionTextDisabled: {
+    color: '#991B1B',
+  },
+
+  // FAB
+  fabButton: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 9999,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  fabButtonText: {
+    color: '#FFFFFF',
+    fontSize: 34,
+    fontWeight: '300',
+    marginTop: -2,
+  },
+
+  // Alert Banner
   alertBanner: {
     backgroundColor: '#EF4444',
     paddingVertical: 12,
@@ -824,7 +1085,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    elevation: 4,
   },
   alertBannerContent: {
     flex: 1,
@@ -832,321 +1092,43 @@ const styles = StyleSheet.create({
   },
   alertBannerTitle: {
     color: '#FFFFFF',
-    fontWeight: '800',
+    fontWeight: '900',
     fontSize: 14,
   },
   alertBannerSubtitle: {
     color: '#FEE2E2',
     fontSize: 12,
     marginTop: 2,
+    fontWeight: '700',
   },
   alertBannerButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#FFD166',
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: 9999,
   },
   alertBannerButtonText: {
-    color: '#EF4444',
-    fontWeight: '700',
+    color: '#FF8500',
+    fontWeight: '900',
     fontSize: 13,
   },
-  quickBar: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 6,
-    gap: 8,
-  },
-  instantProofButton: {
-    flex: 2,
-    backgroundColor: '#4F46E5',
-    paddingVertical: 9,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 2,
-  },
-  instantProofText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  quickButton: {
-    flex: 1,
-    backgroundColor: '#EEF2FF',
-    paddingVertical: 9,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
-  },
-  quickButtonText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#4338CA',
-  },
-  quickButtonAi: {
-    backgroundColor: '#F0FDF4',
-    borderColor: '#BBF7D0',
-  },
-  quickButtonAiText: {
-    color: '#15803D',
-  },
-  listContent: {
-    padding: 16,
-    paddingBottom: 96,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    elevation: 2,
-  },
-  cardInAlert: {
-    borderColor: '#EF4444',
-    borderWidth: 2,
-    backgroundColor: '#FFF5F5',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-  },
-  titleContainer: {
-    flex: 1,
-    marginRight: 8,
-  },
-  titleWithBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  typeMiniTag: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  typeMiniTagWater: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
-  },
-  typeMiniTagMed: {
-    backgroundColor: '#FAF5FF',
-    borderColor: '#E9D5FF',
-  },
-  typeMiniTagText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  typeMiniTagTextWater: {
-    color: '#1D4ED8',
-  },
-  typeMiniTagTextMed: {
-    color: '#7E22CE',
-  },
-  habitTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#0F172A',
-    marginBottom: 3,
-  },
-  intervalText: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '500',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  actionIconBtn: {
-    padding: 4,
-  },
-  actionIconText: {
-    fontSize: 15,
-  },
-  progressContainer: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  progressLabel: {
-    fontSize: 12,
-    color: '#475569',
-  },
-  progressBold: {
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  percentageText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#3B82F6',
-  },
-  percentageTextSuccess: {
-    color: '#10B981',
-  },
-  progressBarBackground: {
-    height: 8,
-    backgroundColor: '#E2E8F0',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#3B82F6',
-    borderRadius: 4,
-  },
-  progressBarFillMed: {
-    backgroundColor: '#8B5CF6',
-  },
-  progressBarFillCompleted: {
-    backgroundColor: '#10B981',
-  },
-  badgesRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 14,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 16,
-    borderWidth: 1,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  activeHoursBadge: {
-    backgroundColor: '#F0FDF4',
-    borderColor: '#86EFAC',
-  },
-  activeHoursBadgeText: {
-    color: '#166534',
-  },
-  sleepHoursBadge: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#CBD5E1',
-  },
-  sleepHoursBadgeText: {
-    color: '#64748B',
-  },
-  completedBadge: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#22C55E',
-  },
-  completedBadgeText: {
-    color: '#15803D',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  timeBadge: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#CBD5E1',
-  },
-  timeBadgeText: {
-    color: '#475569',
-  },
-  alertBadge: {
-    backgroundColor: '#FEE2E2',
-    borderColor: '#EF4444',
-  },
-  alertBadgeText: {
-    color: '#DC2626',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionButton: {
-    flex: 1,
-    paddingVertical: 11,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  kanitlaButton: {
-    backgroundColor: '#4F46E5',
-  },
-  kanitlaAlertButton: {
-    backgroundColor: '#DC2626',
-  },
-  kanitlaButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  erteleButton: {
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  erteleButtonText: {
-    color: '#334155',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  erteleDisabledButton: {
-    backgroundColor: '#FEE2E2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-  },
-  erteleDisabledButtonText: {
-    color: '#B91C1C',
-    fontWeight: '700',
-  },
-  resetSmallButton: {
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-  },
-  resetSmallButtonText: {
-    color: '#475569',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+
+  // Empty State
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 80,
+    paddingVertical: 60,
     paddingHorizontal: 24,
   },
   emptyIcon: {
     fontSize: 56,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   emptyTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 8,
+    fontWeight: '900',
+    color: '#000000',
+    marginBottom: 6,
     textAlign: 'center',
   },
   emptySubtitle: {
@@ -1154,25 +1136,10 @@ const styles = StyleSheet.create({
     color: '#64748B',
     textAlign: 'center',
     lineHeight: 20,
+    fontWeight: '600',
   },
-  fab: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#4F46E5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 8,
-  },
-  fabText: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: '400',
-    lineHeight: 34,
-  },
+
+  // Modal
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
@@ -1181,13 +1148,13 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 28,
+    padding: 22,
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
+    fontWeight: '900',
+    color: '#000000',
     marginBottom: 8,
   },
   modalSubtitle: {
@@ -1195,16 +1162,17 @@ const styles = StyleSheet.create({
     color: '#64748B',
     lineHeight: 18,
     marginBottom: 16,
+    fontWeight: '600',
   },
   modalInput: {
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 14,
-    color: '#0F172A',
+    color: '#000000',
     marginBottom: 18,
   },
   modalActions: {
@@ -1214,34 +1182,32 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   modalTestBtn: {
-    backgroundColor: '#EEF2FF',
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
+    backgroundColor: '#00C2CB',
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 10,
+    borderRadius: 9999,
   },
   modalTestText: {
-    color: '#4F46E5',
-    fontWeight: '700',
+    color: '#000000',
+    fontWeight: '900',
     fontSize: 13,
   },
   modalCancelBtn: {
     paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
   },
   modalCancelText: {
     color: '#64748B',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   modalSaveBtn: {
-    backgroundColor: '#4F46E5',
+    backgroundColor: '#FFD166',
     paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 10,
+    paddingHorizontal: 18,
+    borderRadius: 9999,
   },
   modalSaveText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
+    color: '#FF8500',
+    fontWeight: '900',
   },
 });
