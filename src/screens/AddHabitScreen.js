@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { saveHabit, DEFAULT_DAYS_CONFIG } from '../services/storage';
 import { scheduleHabitNotification } from '../services/notifications';
+import { getUserProfile } from '../services/userService';
+import TimePickerModal from '../components/TimePickerModal';
 
 const PRESET_INTERVALS = [15, 30, 45, 60, 120, 180];
 const SUGGESTIONS = ['💧 Su İç (Günlük Hedef)', '💊 Sabah İlacı', '🚶 Egzersiz Yap', '📖 Kitap Oku'];
@@ -37,6 +39,47 @@ export default function AddHabitScreen({ navigation }) {
   const [daysConfig, setDaysConfig] = useState(DEFAULT_DAYS_CONFIG);
   const [showDaysEditor, setShowDaysEditor] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [recommendedTarget, setRecommendedTarget] = useState(null);
+
+  // Alarm Saati Seçici Modal Durumu
+  const [pickerModal, setPickerModal] = useState({
+    visible: false,
+    dayKey: null,
+    field: null,
+    title: '',
+    initialTime: '09:00',
+  });
+
+  // Profilde kayıtlı bilimsel su önerisini çek ve varsayılan olarak ata
+  useEffect(() => {
+    getUserProfile().then((p) => {
+      if (p && p.recommendedLiters) {
+        setDailyTargetLiters(p.recommendedLiters.toString());
+        setRecommendedTarget(p.recommendedLiters);
+      }
+    });
+  }, []);
+
+  const openTimePicker = (dayKey, field) => {
+    const currentVal =
+      daysConfig[dayKey]?.[field] || (field === 'startHour' ? '09:00' : '23:00');
+    const dayName = DAY_LABELS[dayKey] || '';
+    const fieldName = field === 'startHour' ? 'Başlama Saati' : 'Bitiş Saati';
+    setPickerModal({
+      visible: true,
+      dayKey,
+      field,
+      initialTime: currentVal,
+      title: `${dayName} - ${fieldName}`,
+    });
+  };
+
+  const handleConfirmTime = (timeStr) => {
+    if (pickerModal.dayKey && pickerModal.field) {
+      updateDaySetting(pickerModal.dayKey, pickerModal.field, timeStr);
+    }
+    setPickerModal((prev) => ({ ...prev, visible: false }));
+  };
 
   const updateDaySetting = (dayKey, field, value) => {
     setDaysConfig((prev) => ({
@@ -187,6 +230,14 @@ export default function AddHabitScreen({ navigation }) {
             />
             <Text style={styles.suffixText}>Litre / gün</Text>
           </View>
+
+          {recommendedTarget && (
+            <View style={styles.recBadge}>
+              <Text style={styles.recBadgeText}>
+                ✨ Profilinize (EFSA/WHO rehberi) göre önerilen hedef: {recommendedTarget} L
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Bir Bardak/Doğrulama Miktarı */}
@@ -291,28 +342,28 @@ export default function AddHabitScreen({ navigation }) {
                       <View style={styles.hoursRow}>
                         <View style={styles.hourInputGroup}>
                           <Text style={styles.hourLabel}>Başla:</Text>
-                          <TextInput
-                            style={styles.hourInput}
-                            value={day.startHour}
-                            placeholder="09:00"
-                            maxLength={5}
-                            onChangeText={(val) =>
-                              updateDaySetting(dayKey, 'startHour', val)
-                            }
-                          />
+                          <TouchableOpacity
+                            style={styles.timeSelectButton}
+                            onPress={() => openTimePicker(dayKey, 'startHour')}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.timeSelectButtonText}>
+                              ⏰ {day.startHour || '09:00'}
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                         <Text style={styles.hourSeparator}>—</Text>
                         <View style={styles.hourInputGroup}>
                           <Text style={styles.hourLabel}>Bitir:</Text>
-                          <TextInput
-                            style={styles.hourInput}
-                            value={day.endHour}
-                            placeholder="23:00"
-                            maxLength={5}
-                            onChangeText={(val) =>
-                              updateDaySetting(dayKey, 'endHour', val)
-                            }
-                          />
+                          <TouchableOpacity
+                            style={styles.timeSelectButton}
+                            onPress={() => openTimePicker(dayKey, 'endHour')}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.timeSelectButtonText}>
+                              ⏰ {day.endHour || '23:00'}
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
                     )}
@@ -345,6 +396,15 @@ export default function AddHabitScreen({ navigation }) {
           </Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Standart Alarm Saati ve Dakika Seçici Modalı */}
+      <TimePickerModal
+        visible={pickerModal.visible}
+        initialTime={pickerModal.initialTime}
+        title={pickerModal.title}
+        onConfirm={handleConfirmTime}
+        onClose={() => setPickerModal((prev) => ({ ...prev, visible: false }))}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -555,6 +615,36 @@ const styles = StyleSheet.create({
   hourSeparator: {
     fontSize: 12,
     color: '#94A3B8',
+  },
+  timeSelectButton: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    minWidth: 78,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timeSelectButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4338CA',
+  },
+  recBadge: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 8,
+  },
+  recBadgeText: {
+    fontSize: 11,
+    color: '#065F46',
+    fontWeight: '600',
   },
   ruleCard: {
     backgroundColor: '#EFF6FF',

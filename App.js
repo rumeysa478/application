@@ -10,6 +10,7 @@ import EditHabitScreen from './src/screens/EditHabitScreen';
 import CameraProofScreen from './src/screens/CameraProofScreen';
 import LeaderboardScreen from './src/screens/LeaderboardScreen';
 import WidgetShopScreen from './src/screens/WidgetShopScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -55,6 +56,14 @@ export default function App() {
             component={EditHabitScreen}
             options={{
               title: 'Alışkanlığı Düzenle',
+              headerBackTitle: 'Geri',
+            }}
+          />
+          <Stack.Screen
+            name="Profile"
+            component={ProfileScreen}
+            options={{
+              title: '👤 Profil & Su Hedefi',
               headerBackTitle: 'Geri',
             }}
           />

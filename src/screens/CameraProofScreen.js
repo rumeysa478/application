@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { recordWaterIntakeProof } from '../services/storage';
 import { stopVibration } from '../services/vibration';
-import { addScore } from '../services/userService';
+import { addProofScore } from '../services/userService';
 import {
   analyzeImageForWaterContainer,
   getStoredApiKey,
@@ -24,7 +24,14 @@ import {
 } from '../services/visionAi';
 
 export default function CameraProofScreen({ route, navigation }) {
-  const { habitId, habitTitle, portionLiters = 0.25 } = route.params || {};
+  const {
+    habitId,
+    habitTitle,
+    portionLiters = 0.25,
+    proofType = 'mandatory',
+    zeroSnooze = false,
+    onTime = true,
+  } = route.params || {};
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState('back');
   const [photo, setPhoto] = useState(null);
@@ -254,12 +261,13 @@ export default function CameraProofScreen({ route, navigation }) {
     stopVibration();
     const result = await recordWaterIntakeProof(habitId, amount);
 
-    // Puan ödülü (Temel 50 puan, hedef bittiğinde ekstra 100 puan)
-    let baseAward = 50;
-    if (result.goalReached) {
-      baseAward += 100;
-    }
-    const scoreResult = await addScore(baseAward, 'Su Kanıtı Doğrulandı');
+    // KURAL 3: Zorunlu Kanıt vs. Ek Kanıt Puanlama Motoru
+    const scoreResult = await addProofScore({
+      type: proofType,
+      onTime: onTime,
+      zeroSnooze: zeroSnooze,
+      goalReached: result.goalReached,
+    });
 
     // Geçici fotoğrafı temizle
     setPhoto(null);
@@ -268,22 +276,42 @@ export default function CameraProofScreen({ route, navigation }) {
     const totalIntake = result.habit.todayIntakeLiters;
     const target = result.habit.dailyTargetLiters;
 
-    const pointsMsg =
-      scoreResult.multiplier > 1
-        ? `🪙 +${scoreResult.earnedPoints} Puan Kazandınız! (🔥 2x Bonusuyla ${scoreResult.basePoints}x2)`
-        : `🪙 +${scoreResult.earnedPoints} Puan Kazandınız!`;
+    let pointsMsg = '';
+    if (proofType === 'mandatory') {
+      const breakdown = [];
+      if (onTime) breakdown.push('+20 zamanında');
+      else breakdown.push('+10 geç');
+      if (zeroSnooze) breakdown.push('+15 sıfır erteleme bonusu');
+      if (result.goalReached) breakdown.push('+35 hedef tamamlandı');
+
+      const breakdownText = breakdown.join(', ');
+      if (scoreResult.multiplier > 1) {
+        pointsMsg = `🪙 +${scoreResult.earnedPoints} Puan! (🔥 2x Bonusuyla [${breakdownText}] x 2)`;
+      } else {
+        pointsMsg = `🪙 +${scoreResult.earnedPoints} Puan! (${breakdownText})`;
+      }
+    } else {
+      // Ek Kanıt
+      if (scoreResult.isCapped) {
+        pointsMsg = '🪙 Günlük ek kanıt puan kotası (5/5) doldu. Puan eklenmedi fakat su tüketiminiz başarıyla kaydedildi.';
+      } else {
+        pointsMsg = `🪙 +${scoreResult.earnedPoints} Puan! (Ek Kanıt: +10 puan, 2x çarpanı uygulanmaz)`;
+      }
+    }
+
+    const mascotMsg = `🌱 Maskot Sağlığı: %${scoreResult.newWidgetHealth} (Günde maks +15 kademeli büyüme)`;
 
     if (result.goalReached) {
       Alert.alert(
         '🎉 GÜNLÜK HEDEF TAMAMLANDI!',
-        `Su kabı doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml eklendi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n\n${pointsMsg}\n🌱 Maskotunuz büyüdü ve gelişti!`,
+        `Su kabı doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml eklendi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n\n${pointsMsg}\n\n${mascotMsg}`,
         [{ text: 'Harika!', onPress: () => navigation.goBack() }]
       );
     } else {
       const remaining = (target - totalIntake).toFixed(2);
       Alert.alert(
         '✅ Kanıt Doğrulandı!',
-        `Su kabı başarıyla doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml kaydedildi.\nBugünkü toplam: ${totalIntake} L / ${target} L (Kalan: ${remaining} L)\n\n${pointsMsg}\n🌱 Maskotunuz sulandı!`,
+        `Su kabı başarıyla doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml kaydedildi.\nBugünkü toplam: ${totalIntake} L / ${target} L (Kalan: ${remaining} L)\n\n${pointsMsg}\n\n${mascotMsg}`,
         [{ text: 'Tamam', onPress: () => navigation.goBack() }]
       );
     }
@@ -298,9 +326,13 @@ export default function CameraProofScreen({ route, navigation }) {
 
           <SafeAreaView style={styles.previewOverlay} edges={['top', 'bottom']}>
             <View style={styles.previewHeader}>
-              <Text style={styles.previewTitle}>📸 Kanıt Fotoğrafı Analizi</Text>
+              <Text style={styles.previewTitle}>
+                {proofType === 'mandatory' ? '🚨 Zorunlu Kanıt Analizi' : '💧 Ek Kanıt Analizi'}
+              </Text>
               <Text style={styles.previewSubtitle}>
-                Yapay zekâ karede su bardağı veya matara olup olmadığını kontrol edecektir.
+                {proofType === 'mandatory'
+                  ? 'Zamanında: +20, Sıfır erteleme: +15, Hedef: +35 (2x varsa çarpar)'
+                  : 'Ek Kanıt: +10 Puan (Günlük maks 5 adet, 2x çarpanı uygulanmaz)'}
               </Text>
             </View>
 
@@ -368,7 +400,7 @@ export default function CameraProofScreen({ route, navigation }) {
 
               <View style={styles.guideBadge}>
                 <Text style={styles.guideBadgeText}>
-                  {habitTitle || 'Su Kabı Doğrulama'}
+                  {proofType === 'mandatory' ? '🚨 Zorunlu Kanıt' : '💧 Ek Kanıt'} • {habitTitle || 'Su Kabı'}
                 </Text>
               </View>
 

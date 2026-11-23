@@ -155,24 +155,32 @@ export default function HomeScreen({ navigation }) {
     );
   };
 
-  // Kamera Kanıt Ekranına Yönlendirme (Her an ek kanıt yükleme)
-  const handleOpenProofCamera = (item) => {
+  // Kamera Kanıt Ekranına Yönlendirme (Zorunlu vs. Ek Kanıt desteği)
+  const handleOpenProofCamera = (item, proofType = 'mandatory') => {
     stopVibration();
     if (activeAlertHabit && activeAlertHabit.id === item.id) {
       setActiveAlertHabit(null);
     }
+    const currentSnooze = item.snoozeCount || 0;
+    const zeroSnooze = currentSnooze === 0;
+    const onTime = currentSnooze === 0;
+
     navigation.navigate('CameraProof', {
       habitId: item.id,
       habitTitle: item.title,
       portionLiters: item.portionLiters || 0.25,
+      proofType,
+      zeroSnooze,
+      onTime,
+      currentSnooze,
     });
   };
 
-  // Hızlı Kanıt Yükleme Eylemi (Doğrudan ana ekrandan)
+  // Hızlı Kanıt Yükleme Eylemi (Doğrudan ana ekrandan - Ek Kanıt)
   const handleQuickProof = () => {
     const targetHabit = habits.find((h) => h.dailyTargetLiters) || habits[0];
     if (targetHabit) {
-      handleOpenProofCamera(targetHabit);
+      handleOpenProofCamera(targetHabit, 'extra');
     } else {
       Alert.alert(
         'Alışkanlık Bulunamadı',
@@ -412,7 +420,12 @@ export default function HomeScreen({ navigation }) {
               isAlertActive && styles.kanitlaAlertButton,
             ]}
             activeOpacity={0.7}
-            onPress={() => handleOpenProofCamera(item)}
+            onPress={() =>
+              handleOpenProofCamera(
+                item,
+                isAlertActive ? 'mandatory' : isGoalCompleted ? 'extra' : 'mandatory'
+              )
+            }
           >
             <Text style={styles.kanitlaButtonText}>
               {isAlertActive
@@ -462,7 +475,11 @@ export default function HomeScreen({ navigation }) {
     <View style={styles.container}>
       {/* Üst Sosyal & Profil Çubuğu */}
       <View style={styles.topProfileBar}>
-        <View style={styles.profileInfoGroup}>
+        <TouchableOpacity
+          style={styles.profileInfoGroup}
+          activeOpacity={0.8}
+          onPress={() => navigation.navigate('Profile')}
+        >
           <Text style={styles.profileAvatar}>{profile?.avatar || '🌟'}</Text>
           <View>
             <Text style={styles.profileUsername}>{profile?.username || 'Habitime'}</Text>
@@ -475,10 +492,17 @@ export default function HomeScreen({ navigation }) {
               )}
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* Üst Navigasyon Butonları */}
         <View style={styles.navButtonsRow}>
+          <TouchableOpacity
+            style={[styles.navButton, styles.navButtonProfile]}
+            onPress={() => navigation.navigate('Profile')}
+          >
+            <Text style={[styles.navButtonText, styles.navButtonProfileText]}>👤 Profil</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.navButton}
             onPress={() => navigation.navigate('Leaderboard')}
@@ -709,6 +733,13 @@ const styles = StyleSheet.create({
   },
   navButtonStoreText: {
     color: '#15803D',
+  },
+  navButtonProfile: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+  },
+  navButtonProfileText: {
+    color: '#334155',
   },
   alertBanner: {
     backgroundColor: '#EF4444',

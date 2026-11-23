@@ -14,54 +14,114 @@ const generateFriendCode = () => {
   return code;
 };
 
-// Başlangıç varsayılan arkadaş listesi (Sosyal deneyimi canlandırmak için)
+// EFSA / WHO rehberlerine dayalı kilo başına ~30-35 ml formülü
+export const calculateRecommendedWater = (weight, age, height) => {
+  const w = parseFloat(weight);
+  const a = parseInt(age, 10);
+  const h = parseFloat(height);
+
+  if (!w || isNaN(w) || w <= 0) {
+    return 2.5; // Veri yoksa EFSA/WHO standart önerisi
+  }
+
+  let mlPerKg = 33; // 30-35 ml/kg aralığı
+  if (!isNaN(a) && a > 0) {
+    if (a < 30) mlPerKg = 35;
+    else if (a >= 55) mlPerKg = 30;
+    else mlPerKg = 33;
+  }
+
+  let heightBonus = 0;
+  if (!isNaN(h) && h > 185) heightBonus = 0.2;
+
+  let totalLiters = (w * mlPerKg) / 1000 + heightBonus;
+  totalLiters = Math.max(1.5, Math.min(4.5, totalLiters)); // Güvenli aralık
+  return parseFloat(totalLiters.toFixed(1));
+};
+
+// Başlangıç arkadaş listesi
 const DEFAULT_FRIENDS = [
-  { id: 'f-1', username: 'Deniz_Su', friendCode: 'HAB-DNZ1', score: 320, avatar: '🌊' },
-  { id: 'f-2', username: 'Baris_Fit', friendCode: 'HAB-BRS2', score: 280, avatar: '⚡' },
-  { id: 'f-3', username: 'Selin_Rutin', friendCode: 'HAB-SLN3', score: 210, avatar: '🌸' },
+  {
+    id: 'f-1',
+    username: 'Deniz_Su',
+    friendCode: 'HAB-DNZ1',
+    score: 540,
+    avatar: '🌊',
+    widgetStatus: { tierId: 'flower_tier_1', health: 65, label: 'Tomurcuk 🌷' },
+  },
+  {
+    id: 'f-2',
+    username: 'Baris_Fit',
+    friendCode: 'HAB-BRS2',
+    score: 480,
+    avatar: '⚡',
+    widgetStatus: { tierId: 'flower_tier_2', health: 40, label: 'Genç Fidan 🪴' },
+  },
+  {
+    id: 'f-3',
+    username: 'Selin_Rutin',
+    friendCode: 'HAB-SLN3',
+    score: 390,
+    avatar: '🌸',
+    widgetStatus: { tierId: 'healer_tier_1', health: 80, label: 'Ayağa Kalktı 🧸' },
+  },
 ];
 
 /**
- * Kullanıcı profilini yerel depolamadan getirir.
- * Yoksa başlangıç profili oluşturur.
+ * Kullanıcı profilini getirir veya oluşturur.
  */
 export const getUserProfile = async () => {
   try {
     const json = await AsyncStorage.getItem(USER_PROFILE_KEY);
+    const today = new Date().toISOString().slice(0, 10);
+
     if (json) {
       const profile = JSON.parse(json);
-      // Günlük skor sıfırlama kontrolü
-      const today = new Date().toISOString().slice(0, 10);
+
+      // Günlük sıfırlama & Haftalık döngü kontrolü
       if (profile.lastActiveDay !== today) {
         profile.lastActiveDay = today;
-        profile.todayChallengeScore = 0;
-        // Dünün %10 ödülü kontrolü: hasDoublePointsNextDay bugüne aktarılır
+        profile.todayExtraProofCount = 0; // Günlük ek kanıt sayacı sıfırlanır
+        profile.todayEarnedGrowth = 0; // Günlük maskot büyüme tavanı sıfırlanır
+
+        // Dünün %10 ödülü kontrolü: 2x bonus bugüne aktarılır
         if (profile.hasDoublePointsNextDay) {
           profile.isDoublePointsActiveToday = true;
           profile.hasDoublePointsNextDay = false;
         } else {
           profile.isDoublePointsActiveToday = false;
         }
+
         await AsyncStorage.setItem(USER_PROFILE_KEY, JSON.stringify(profile));
       }
       return profile;
     }
 
-    // İlk kez açılıyorsa varsayılan profil
+    // İlk kurulum profili
     const defaultProfile = {
       id: 'user_' + Date.now().toString(36),
       username: 'HabitimeKullanicisi',
       avatar: '🌟',
       friendCode: generateFriendCode(),
-      totalScore: 150, // Hoş geldin puanı
-      todayChallengeScore: 50,
+      // İsteğe bağlı kişisel veriler
+      age: '',
+      height: '',
+      weight: '',
+      recommendedLiters: 2.5,
+      // Puanlar
+      totalScore: 200,
+      weeklyChallengeScore: 120,
+      isDoublePointsActiveToday: false, // 2x çarpan aktif mi?
       hasDoublePointsNextDay: false, // Yarın için 2x kazanıldı mı?
-      isDoublePointsActiveToday: false, // Bugün 2x aktif mi?
-      lastActiveDay: new Date().toISOString().slice(0, 10),
+      todayExtraProofCount: 0,
+      todayEarnedGrowth: 0,
+      lastActiveDay: today,
       friends: DEFAULT_FRIENDS,
       unlockedWidgets: ['flower_tier_1', 'healer_tier_1'],
       activeWidgetId: 'flower_tier_1',
-      widgetHealth: 45, // 0 - 100 arası büyüme/iyileşme seviyesi
+      widgetHealth: 35, // Gerçek zamanlı günlere yayılan kademeli büyüme (0-100)
+      widgetDaysStreak: 1, // Kaç gündür kesintisiz sulanıyor/bakılıyor
+      pointHistory: [],
     };
 
     await AsyncStorage.setItem(USER_PROFILE_KEY, JSON.stringify(defaultProfile));
@@ -74,7 +134,6 @@ export const getUserProfile = async () => {
 
 /**
  * Kullanıcı profilini günceller.
- * @param {Object} updates
  */
 export const updateUserProfile = async (updates) => {
   try {
@@ -89,130 +148,218 @@ export const updateUserProfile = async (updates) => {
 };
 
 /**
- * Kullanıcıya puan ekler ve 2x çarpanını otomatik uygular.
- * @param {number} basePoints - Temel kazanılan puan
- * @param {string} [reason='Görev Tamamlandı'] - Puan kazanma sebebi
- * @returns {Promise<{ earnedPoints: number, basePoints: number, multiplier: number, newTotalScore: number }>}
+ * KURAL 3: ZORUNLU KANIT VS. EK KANIT PUAN MOTORU
+ *
+ * Zorunlu Kanıt:
+ *  - Zamanında yapıldıysa: +20 puan
+ *  - Erteleme sonrası (geç): +10 puan
+ *  - Sıfır erteleme bonusu: +15 puan
+ *  - Günlük hedef tamamlanınca: +35 puan
+ *  - 2x bonusu SADECE zorunlu kanıtlara uygulanır!
+ *
+ * Ek Kanıt:
+ *  - Her kanıt: +10 puan
+ *  - Günde en fazla 5 kez puan alınabilir (günlük tavan)
+ *  - 2x bonusu Ek Kanıt'a ASLA dahil edilmez (çarpan daima 1x).
+ *
+ * @param {Object} options
+ * @param {'mandatory' | 'extra'} options.type - Kanıt türü
+ * @param {boolean} [options.onTime=true] - Zamanında mı yapıldı?
+ * @param {boolean} [options.zeroSnooze=false] - Hiç erteleme yapılmadı mı?
+ * @param {boolean} [options.goalReached=false] - Günlük su hedefi bu kanıtla bitti mi?
  */
-export const addScore = async (basePoints, reason = 'Görev Tamamlandı') => {
+export const addProofScore = async ({
+  type = 'mandatory',
+  onTime = true,
+  zeroSnooze = false,
+  goalReached = false,
+}) => {
   try {
     const profile = await getUserProfile();
-    const multiplier = profile.isDoublePointsActiveToday ? 2 : 1;
+    let basePoints = 0;
+    let multiplier = 1;
+    let isCapped = false;
+
+    if (type === 'mandatory') {
+      // Temel puan (Zamanında: 20, Erteleme sonrası: 10)
+      basePoints = onTime ? 20 : 10;
+
+      // Sıfır erteleme bonusu
+      if (zeroSnooze) {
+        basePoints += 15;
+      }
+
+      // Günlük hedef tamamlama bonusu
+      if (goalReached) {
+        basePoints += 35;
+      }
+
+      // 2x çarpanı SADECE zorunlu kanıtlara uygulanır
+      if (profile.isDoublePointsActiveToday) {
+        multiplier = 2;
+      }
+    } else {
+      // Ek Kanıt: +10 puan, 2x çarpanı ASLA uygulanmaz
+      const currentExtraCount = profile.todayExtraProofCount || 0;
+      if (currentExtraCount >= 5) {
+        // Günlük tavan aşıldı: puan verilmez ama su tüketimi kaydedilir
+        isCapped = true;
+        basePoints = 0;
+      } else {
+        basePoints = 10;
+        profile.todayExtraProofCount = currentExtraCount + 1;
+      }
+      multiplier = 1; // 2x dahil edilmez!
+    }
+
     const earnedPoints = basePoints * multiplier;
-
     const newTotalScore = (profile.totalScore || 0) + earnedPoints;
-    const newDailyScore = (profile.todayChallengeScore || 0) + earnedPoints;
+    const newWeeklyScore = (profile.weeklyChallengeScore || 0) + earnedPoints;
 
-    // Yaşayan widget sağlığını da artır (her doğrulamada +15 büyüme)
-    const newWidgetHealth = Math.min(100, (profile.widgetHealth || 0) + 15);
+    // KURAL 5: Maskot 1 günde büyümez; günde en fazla +15 büyüme kazanabilir (günlere yayılır)
+    const currentDayGrowth = profile.todayEarnedGrowth || 0;
+    const growthToAdd = Math.min(10, Math.max(0, 15 - currentDayGrowth)); // Maksimum günlük 15 limit
+    const newWidgetHealth = Math.min(100, (profile.widgetHealth || 0) + growthToAdd);
+    const newDayGrowth = currentDayGrowth + growthToAdd;
 
     const updated = await updateUserProfile({
       totalScore: newTotalScore,
-      todayChallengeScore: newDailyScore,
+      weeklyChallengeScore: newWeeklyScore,
+      todayExtraProofCount: profile.todayExtraProofCount,
+      todayEarnedGrowth: newDayGrowth,
       widgetHealth: newWidgetHealth,
     });
 
     return {
-      earnedPoints,
+      type,
       basePoints,
       multiplier,
+      earnedPoints,
+      isCapped,
       newTotalScore,
-      newDailyScore,
-      widgetHealth: newWidgetHealth,
+      newWeeklyScore,
+      newWidgetHealth,
       profile: updated,
     };
   } catch (error) {
-    console.error('Puan eklenirken hata oluştu:', error);
-    return { earnedPoints: basePoints, multiplier: 1, newTotalScore: basePoints };
+    console.error('Puan ekleme hatası:', error);
+    return { earnedPoints: 10, multiplier: 1, newTotalScore: 0 };
   }
 };
 
 /**
- * Arkadaş kodu veya kullanıcı adı ile yeni bir arkadaş ekler.
- * @param {string} friendCodeOrName
+ * KURAL 5: ARKADAŞA PUAN GÖNDERME
+ * Kullanıcı kendi puanından arkadaşına hediye puan aktarır.
+ */
+export const sendPointsToFriend = async (friendId, amount = 25) => {
+  try {
+    const profile = await getUserProfile();
+    const pts = parseInt(amount, 10);
+
+    if (isNaN(pts) || pts <= 0) {
+      throw new Error('Geçerli bir puan miktarı girin.');
+    }
+
+    if (profile.totalScore < pts) {
+      throw new Error(`Yetersiz puan! Mevcut puanınız: ${profile.totalScore}`);
+    }
+
+    const friendIndex = (profile.friends || []).findIndex((f) => f.id === friendId);
+    if (friendIndex === -1) {
+      throw new Error('Arkadaş bulunamadı.');
+    }
+
+    const friend = profile.friends[friendIndex];
+    friend.score = (friend.score || 0) + pts;
+
+    const newScore = profile.totalScore - pts;
+    const updatedFriends = [...profile.friends];
+    updatedFriends[friendIndex] = friend;
+
+    const updated = await updateUserProfile({
+      totalScore: newScore,
+      friends: updatedFriends,
+    });
+
+    return {
+      success: true,
+      sentAmount: pts,
+      friendName: friend.username,
+      newTotalScore: newScore,
+      profile: updated,
+    };
+  } catch (error) {
+    console.error('Puan gönderme hatası:', error);
+    throw error;
+  }
+};
+
+/**
+ * Arkadaş ekleme
  */
 export const addFriend = async (friendCodeOrName) => {
   try {
     const profile = await getUserProfile();
     const query = friendCodeOrName.trim().toUpperCase();
 
-    if (!query) {
-      throw new Error('Lütfen bir arkadaş kodu veya kullanıcı adı girin.');
-    }
-
-    if (query === profile.friendCode) {
-      throw new Error('Kendi arkadaş kodunuzu ekleyemezsiniz!');
-    }
+    if (!query) throw new Error('Arkadaş kodu veya kullanıcı adı girin.');
+    if (query === profile.friendCode) throw new Error('Kendi kodunuzu ekleyemezsiniz!');
 
     const alreadyAdded = (profile.friends || []).some(
       (f) => f.friendCode.toUpperCase() === query || f.username.toUpperCase() === query
     );
+    if (alreadyAdded) throw new Error('Bu kullanıcı zaten listenizde ekli.');
 
-    if (alreadyAdded) {
-      throw new Error('Bu kullanıcı zaten arkadaş listenizde ekli.');
-    }
-
-    // Yeni arkadaş nesnesi (Gerçekçi puanla simüle edilir)
     const newFriend = {
       id: 'friend_' + Date.now().toString(36),
       username: query.startsWith('HAB-') ? `Dost_${query.slice(-4)}` : query,
       friendCode: query.startsWith('HAB-') ? query : `HAB-${Math.floor(1000 + Math.random() * 9000)}`,
-      score: Math.floor(180 + Math.random() * 220),
-      avatar: ['🌱', '🚀', '☕', '🌟', '🎯'][Math.floor(Math.random() * 5)],
+      score: Math.floor(250 + Math.random() * 350),
+      avatar: ['🌱', '🚀', '☕', '🌟', '🎯', '🌊'][Math.floor(Math.random() * 6)],
+      widgetStatus: {
+        tierId: 'flower_tier_1',
+        health: Math.floor(40 + Math.random() * 50),
+        label: 'Gelişiyor 🌿',
+      },
     };
 
     const updatedFriends = [...(profile.friends || []), newFriend];
     await updateUserProfile({ friends: updatedFriends });
     return newFriend;
   } catch (error) {
-    console.error('Arkadaş eklenirken hata:', error);
+    console.error('Arkadaş ekleme hatası:', error);
     throw error;
   }
 };
 
 /**
- * Widget satın alma / kilit açma işlemi.
- * Puan yeterliyse puanı düşer ve kilidi açar.
- * @param {string} widgetId
- * @param {number} cost
+ * Widget kilit açma
  */
 export const unlockWidget = async (widgetId, cost) => {
   try {
     const profile = await getUserProfile();
     if (profile.totalScore < cost) {
-      throw new Error(`Yetersiz puan! Bu widget için ${cost} puan gerekiyor. (Mevcut: ${profile.totalScore})`);
+      throw new Error(`Yetersiz puan! Gereken: ${cost}, Mevcut: ${profile.totalScore}`);
     }
 
     if (profile.unlockedWidgets.includes(widgetId)) {
-      // Zaten açık, doğrudan aktif yap
       return await updateUserProfile({ activeWidgetId: widgetId });
     }
 
-    const newScore = profile.totalScore - cost;
-    const newUnlocked = [...profile.unlockedWidgets, widgetId];
-
     return await updateUserProfile({
-      totalScore: newScore,
-      unlockedWidgets: newUnlocked,
+      totalScore: profile.totalScore - cost,
+      unlockedWidgets: [...profile.unlockedWidgets, widgetId],
       activeWidgetId: widgetId,
     });
   } catch (error) {
-    console.error('Widget kilit açma hatası:', error);
     throw error;
   }
 };
 
-/**
- * Aktif widget'ı değiştirir.
- * @param {string} widgetId
- */
 export const setActiveWidget = async (widgetId) => {
   return await updateUserProfile({ activeWidgetId: widgetId });
 };
 
-/**
- * Yarışmada üst %10'a giren kullanıcı için ertesi gün 2x puan ödülünü tanımlar.
- */
 export const awardTop10Bonus = async () => {
   return await updateUserProfile({ hasDoublePointsNextDay: true });
 };

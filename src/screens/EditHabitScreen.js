@@ -12,6 +12,7 @@ import {
   Switch,
 } from 'react-native';
 import { updateHabit, DEFAULT_DAYS_CONFIG } from '../services/storage';
+import TimePickerModal from '../components/TimePickerModal';
 
 const PRESET_INTERVALS = [15, 30, 45, 60, 120, 180];
 const PRESET_TARGETS = [1.5, 2.0, 2.5, 3.0, 3.5];
@@ -47,6 +48,36 @@ export default function EditHabitScreen({ route, navigation }) {
   );
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Standart Alarm Saat Seçici Modal Durumu
+  const [pickerModal, setPickerModal] = useState({
+    visible: false,
+    dayKey: null,
+    field: null,
+    title: '',
+    initialTime: '09:00',
+  });
+
+  const openTimePicker = (dayKey, field) => {
+    const currentVal =
+      daysConfig[dayKey]?.[field] || (field === 'startHour' ? '09:00' : '23:00');
+    const dayName = DAY_LABELS[dayKey] || '';
+    const fieldName = field === 'startHour' ? 'Başlangıç Saati' : 'Bitiş Saati';
+    setPickerModal({
+      visible: true,
+      dayKey,
+      field,
+      initialTime: currentVal,
+      title: `${dayName} - ${fieldName}`,
+    });
+  };
+
+  const handleConfirmTime = (timeStr) => {
+    if (pickerModal.dayKey && pickerModal.field) {
+      updateDaySetting(pickerModal.dayKey, pickerModal.field, timeStr);
+    }
+    setPickerModal((prev) => ({ ...prev, visible: false }));
+  };
 
   // Gün ayarını güncelle
   const updateDaySetting = (dayKey, field, value) => {
@@ -273,30 +304,30 @@ export default function EditHabitScreen({ route, navigation }) {
                   <View style={styles.hoursRow}>
                     <View style={styles.hourInputGroup}>
                       <Text style={styles.hourLabel}>Başlangıç:</Text>
-                      <TextInput
-                        style={styles.hourInput}
-                        value={day.startHour}
-                        placeholder="09:00"
-                        maxLength={5}
-                        onChangeText={(val) =>
-                          updateDaySetting(dayKey, 'startHour', val)
-                        }
-                      />
+                      <TouchableOpacity
+                        style={styles.timeSelectButton}
+                        onPress={() => openTimePicker(dayKey, 'startHour')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.timeSelectButtonText}>
+                          ⏰ {day.startHour || '09:00'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
 
                     <Text style={styles.hourSeparator}>—</Text>
 
                     <View style={styles.hourInputGroup}>
                       <Text style={styles.hourLabel}>Bitiş:</Text>
-                      <TextInput
-                        style={styles.hourInput}
-                        value={day.endHour}
-                        placeholder="23:00"
-                        maxLength={5}
-                        onChangeText={(val) =>
-                          updateDaySetting(dayKey, 'endHour', val)
-                        }
-                      />
+                      <TouchableOpacity
+                        style={styles.timeSelectButton}
+                        onPress={() => openTimePicker(dayKey, 'endHour')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.timeSelectButtonText}>
+                          ⏰ {day.endHour || '23:00'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 )}
@@ -317,6 +348,15 @@ export default function EditHabitScreen({ route, navigation }) {
           </Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Alarm Saati Seçici Modalı */}
+      <TimePickerModal
+        visible={pickerModal.visible}
+        initialTime={pickerModal.initialTime}
+        title={pickerModal.title}
+        onConfirm={handleConfirmTime}
+        onClose={() => setPickerModal((prev) => ({ ...prev, visible: false }))}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -489,6 +529,22 @@ const styles = StyleSheet.create({
   hourSeparator: {
     fontSize: 14,
     color: '#94A3B8',
+  },
+  timeSelectButton: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timeSelectButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#4338CA',
   },
   saveButton: {
     backgroundColor: '#4F46E5',

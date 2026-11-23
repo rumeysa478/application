@@ -9,14 +9,16 @@ import {
   Alert,
   RefreshControl,
   ScrollView,
+  Modal,
 } from 'react-native';
-import { getDailyLeaderboard } from '../services/leaderboardService';
+import { getWeeklyLeaderboard } from '../services/leaderboardService';
 import {
   getUserProfile,
   addFriend,
+  sendPointsToFriend,
 } from '../services/userService';
 import {
-  getTodayChallenge,
+  getWeeklyChallenge,
   calculateChallengeProgress,
 } from '../data/dailyChallenges';
 import { getHabits } from '../services/storage';
@@ -29,10 +31,19 @@ export default function LeaderboardScreen({ navigation }) {
   const [friendCodeInput, setFriendCodeInput] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
+  // Puan Gönderme Modalı
+  const [sendPointModalVisible, setSendPointModalVisible] = useState(false);
+  const [selectedFriend, setSelectedFriend] = useState(null);
+  const [pointAmount, setPointAmount] = useState('25');
+
+  // Arkadaş Widget Görüntüleme Modalı
+  const [widgetModalVisible, setWidgetModalVisible] = useState(false);
+  const [viewedFriendWidget, setViewedFriendWidget] = useState(null);
+
   const loadData = useCallback(async () => {
     try {
       const [board, prof, habits] = await Promise.all([
-        getDailyLeaderboard(),
+        getWeeklyLeaderboard(),
         getUserProfile(),
         getHabits(),
       ]);
@@ -71,9 +82,23 @@ export default function LeaderboardScreen({ navigation }) {
     }
   };
 
-  const todayChallenge = getTodayChallenge();
+  const handleSendPoints = async () => {
+    if (!selectedFriend) return;
+    try {
+      const result = await sendPointsToFriend(selectedFriend.id, pointAmount);
+      setSendPointModalVisible(false);
+      Alert.alert(
+        '🎁 Puan Gönderildi!',
+        `"${result.friendName}" kullanıcısına ${result.sentAmount} puan gönderildi!\nKalan Puanınız: ${result.newTotalScore}`
+      );
+      await loadData();
+    } catch (e) {
+      Alert.alert('Hata', e.message);
+    }
+  };
 
-  // Filtrelenmiş liste
+  const weeklyChallenge = getWeeklyChallenge();
+
   const displayedList = (leaderboardData?.leaderboard || []).filter((item) => {
     if (activeTab === 'friends') {
       return item.isUser || item.isFriend;
@@ -88,14 +113,12 @@ export default function LeaderboardScreen({ navigation }) {
 
     return (
       <View style={[styles.rankCard, item.isUser && styles.userRankCard]}>
-        {/* Sıralama Numarası / Madalya */}
         <View style={styles.rankNumContainer}>
           <Text style={[styles.rankNumText, isTopThree && styles.medalText]}>
             {rankMedal}
           </Text>
         </View>
 
-        {/* Profil Bilgisi */}
         <View style={styles.avatarCircle}>
           <Text style={styles.avatarText}>{item.avatar || '👤'}</Text>
         </View>
@@ -107,15 +130,40 @@ export default function LeaderboardScreen({ navigation }) {
             </Text>
             {item.isFriend && <Text style={styles.friendBadge}>Dost</Text>}
           </View>
-          {item.rank <= Math.ceil((leaderboardData?.totalCount || 10) * 0.1) && (
-            <Text style={styles.top10Badge}>🔥 Üst %10 (2x Adayı)</Text>
+
+          {item.isTop10 && (
+            <Text style={styles.top10Badge}>🔥 Üst %10 (Eşit Puan Dahil • 2x)</Text>
+          )}
+
+          {/* Arkadaş Eylemleri: Puan Gönder & Maskotunu Gör */}
+          {item.isFriend && (
+            <View style={styles.friendActionsRow}>
+              <TouchableOpacity
+                style={styles.friendActionBtn}
+                onPress={() => {
+                  setSelectedFriend(item);
+                  setSendPointModalVisible(true);
+                }}
+              >
+                <Text style={styles.friendActionBtnText}>🎁 Puan Gönder</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.friendActionBtn, styles.widgetSeeBtn]}
+                onPress={() => {
+                  setViewedFriendWidget(item);
+                  setWidgetModalVisible(true);
+                }}
+              >
+                <Text style={styles.widgetSeeBtnText}>🪴 Maskotu Gör</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
 
-        {/* Skor */}
         <View style={styles.scoreContainer}>
           <Text style={styles.scoreText}>{item.score}</Text>
-          <Text style={styles.scoreLabel}>Puan</Text>
+          <Text style={styles.scoreLabel}>Haftalık Puan</Text>
         </View>
       </View>
     );
@@ -128,22 +176,21 @@ export default function LeaderboardScreen({ navigation }) {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#4F46E5']} />
         }
       >
-        {/* Ortak Günlük Yarışma Kartı */}
+        {/* Ortak Haftalık Yarışma Kartı */}
         <View style={styles.challengeCard}>
           <View style={styles.challengeHeader}>
-            <Text style={styles.challengeBadge}>{todayChallenge.badge}</Text>
+            <Text style={styles.challengeBadge}>{weeklyChallenge.badge}</Text>
             <View style={styles.challengeTitleGroup}>
-              <Text style={styles.challengeTitle}>{todayChallenge.title}</Text>
-              <Text style={styles.challengeDesc}>{todayChallenge.description}</Text>
+              <Text style={styles.challengeTitle}>{weeklyChallenge.title}</Text>
+              <Text style={styles.challengeDesc}>{weeklyChallenge.description}</Text>
             </View>
           </View>
 
-          {/* İlerleme Barı */}
           {challengeProgress && (
             <View style={styles.challengeProgressArea}>
               <View style={styles.challengeProgressLabelRow}>
                 <Text style={styles.challengeProgressLabel}>
-                  İlerlemeniz: {challengeProgress.current} / {challengeProgress.target}
+                  Haftalık İlerlemeniz: {challengeProgress.current} / {challengeProgress.target}
                 </Text>
                 <Text style={styles.challengePercentText}>
                   %{challengeProgress.percentage}
@@ -158,33 +205,28 @@ export default function LeaderboardScreen({ navigation }) {
                   ]}
                 />
               </View>
-              {challengeProgress.isCompleted && (
-                <Text style={styles.challengeDoneText}>
-                  ✓ Günün yarışması tamamlandı! +{todayChallenge.rewardPoints} bonus kazanıldı.
-                </Text>
-              )}
             </View>
           )}
         </View>
 
-        {/* Kullanıcının Canlı Durumu ve %10 Ödül Rozeti */}
+        {/* Kullanıcının Canlı Durumu ve Kural 4 Eşit Puanlı %10 Ödülü */}
         <View style={styles.myStandingCard}>
           <View style={styles.standingRow}>
             <View>
-              <Text style={styles.standingLabel}>GÜNLÜK SIRANIZ</Text>
+              <Text style={styles.standingLabel}>HAFTALIK SIRANIZ</Text>
               <Text style={styles.standingRank}>
                 #{leaderboardData?.userRank || '-'} / {leaderboardData?.totalCount || '-'}
               </Text>
             </View>
             <View style={styles.standingScoreGroup}>
-              <Text style={styles.standingLabel}>YARIŞMA PUANI</Text>
+              <Text style={styles.standingLabel}>HAFTALIK PUAN</Text>
               <Text style={styles.standingScore}>
                 🪙 {leaderboardData?.userEntry?.score || 0}
               </Text>
             </View>
           </View>
 
-          {/* %10 Dilim Ödül Durumu */}
+          {/* Kural 4: Eşit Puan Durumunda %10 Bilgisi */}
           <View
             style={[
               styles.rewardBanner,
@@ -195,28 +237,31 @@ export default function LeaderboardScreen({ navigation }) {
           >
             <Text style={styles.rewardBannerText}>
               {leaderboardData?.isTop10Percent
-                ? `🏆 Tebrikler! Üst %${leaderboardData.percentile} dilimdesiniz. Yarın tüm puanlarınız 2x ile çarpılacak!`
-                : `📊 Şu an üst %${leaderboardData?.percentile || 50} dilimdesiniz. İlk %10'a girip yarın 2x puan kazanmak için kanıt ekleyin!`}
+                ? `🏆 Tebrikler! Üst %10 dilimdesiniz (Eşik Puan: ${leaderboardData.cutoffScore}). Eşit puan kuralı gereğince yarın tüm zorunlu görevlerde 2x Puan avantajınız aktiftir!`
+                : `📊 Üst %10 eşiği şu an ${leaderboardData?.cutoffScore || 0} puandır. Eşit puan alan herkes 2x kazanır! Kanıt ekleyip puanınızı yükseltin.`}
             </Text>
           </View>
 
           {profile?.isDoublePointsActiveToday && (
             <View style={styles.doublePointsActiveBadge}>
               <Text style={styles.doublePointsActiveText}>
-                🔥 2x PUAN BONUSU BUGÜN AKTİF! (Her görevden çift puan)
+                🔥 2x PUAN ÇARPANI BUGÜN AKTİF! (Zorunlu kanıtlar çift puan kazandırır)
               </Text>
             </View>
           )}
         </View>
 
-        {/* Arkadaş Ekleme ve Davet Kodu */}
+        {/* Arkadaş Bağlantısı ve Davet Kodu */}
         <View style={styles.socialCard}>
           <View style={styles.myCodeRow}>
             <Text style={styles.myCodeLabel}>Senin Arkadaş Kodun:</Text>
             <TouchableOpacity
               style={styles.codePill}
               onPress={() => {
-                Alert.alert('Arkadaş Kodu', `Kodunuz: ${profile?.friendCode}\nBu kodu arkadaşlarınızla paylaşarak yarışabilirsiniz!`);
+                Alert.alert(
+                  'Arkadaş Kodu',
+                  `Kodunuz: ${profile?.friendCode}\nBu kodu arkadaşlarınızla paylaşarak yarışabilirsiniz!`
+                );
               }}
             >
               <Text style={styles.codePillText}>{profile?.friendCode || 'HAB-1234'}</Text>
@@ -245,7 +290,7 @@ export default function LeaderboardScreen({ navigation }) {
             onPress={() => setActiveTab('global')}
           >
             <Text style={[styles.tabText, activeTab === 'global' && styles.tabTextActive]}>
-              🌍 Genel Sıralama ({leaderboardData?.totalCount || 0})
+              🌍 Genel ({leaderboardData?.totalCount || 0})
             </Text>
           </TouchableOpacity>
 
@@ -254,12 +299,12 @@ export default function LeaderboardScreen({ navigation }) {
             onPress={() => setActiveTab('friends')}
           >
             <Text style={[styles.tabText, activeTab === 'friends' && styles.tabTextActive]}>
-              👥 Arkadaşlarım ({(profile?.friends || []).length + 1})
+              👥 Arkadaşlar ({(profile?.friends || []).length + 1})
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Liste */}
+        {/* Sıralama Listesi */}
         <View style={styles.listSection}>
           <FlatList
             data={displayedList}
@@ -269,6 +314,93 @@ export default function LeaderboardScreen({ navigation }) {
           />
         </View>
       </ScrollView>
+
+      {/* Puan Gönderme Modalı */}
+      <Modal
+        visible={sendPointModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSendPointModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>🎁 Puan Hediye Et</Text>
+            <Text style={styles.modalSubtitle}>
+              "{selectedFriend?.username}" adlı arkadaşınızı motive etmek için puan gönderin:
+            </Text>
+
+            <View style={styles.pointPresetsRow}>
+              {['10', '25', '50', '100'].map((val) => (
+                <TouchableOpacity
+                  key={val}
+                  style={[styles.presetChip, pointAmount === val && styles.presetChipActive]}
+                  onPress={() => setPointAmount(val)}
+                >
+                  <Text
+                    style={[styles.presetChipText, pointAmount === val && styles.presetChipTextActive]}
+                  >
+                    +{val} Puan
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.balanceNote}>
+              Mevcut Puanınız: 🪙 {profile?.totalScore || 0}
+            </Text>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setSendPointModalVisible(false)}
+              >
+                <Text style={styles.modalCancelText}>Vazgeç</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSendPoints}>
+                <Text style={styles.modalSaveText}>Gönder</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Arkadaş Maskotu Görüntüleme Modalı */}
+      <Modal
+        visible={widgetModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setWidgetModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              🪴 {viewedFriendWidget?.username}'in Maskotu
+            </Text>
+
+            <View style={styles.friendWidgetCenter}>
+              <Text style={styles.friendWidgetAvatar}>
+                {viewedFriendWidget?.avatar === '🌊' ? '🌷' : '🪴'}
+              </Text>
+              <Text style={styles.friendWidgetStage}>
+                {viewedFriendWidget?.widgetStatus?.label || 'Gelişiyor 🌿'}
+              </Text>
+              <Text style={styles.friendWidgetHealth}>
+                Can Seviyesi: %{viewedFriendWidget?.widgetStatus?.health || 50}
+              </Text>
+              <Text style={styles.friendWidgetHint}>
+                Arkadaşınız düzenli su içerek maskotunu gün be gün büyütüyor!
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalSaveBtn}
+              onPress={() => setWidgetModalVisible(false)}
+            >
+              <Text style={styles.modalSaveText}>Kapat</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -341,12 +473,6 @@ const styles = StyleSheet.create({
   },
   challengeProgressFillDone: {
     backgroundColor: '#10B981',
-  },
-  challengeDoneText: {
-    color: '#6EE7B7',
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 6,
   },
   myStandingCard: {
     backgroundColor: '#FFFFFF',
@@ -575,10 +701,37 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   top10Badge: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#EA580C',
     fontWeight: '700',
     marginTop: 2,
+  },
+  friendActionsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 6,
+  },
+  friendActionBtn: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  friendActionBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#4F46E5',
+  },
+  widgetSeeBtn: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  widgetSeeBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#16A34A',
   },
   scoreContainer: {
     alignItems: 'flex-end',
@@ -591,5 +744,111 @@ const styles = StyleSheet.create({
   scoreLabel: {
     fontSize: 10,
     color: '#94A3B8',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 6,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  pointPresetsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+  },
+  presetChip: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  presetChipActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  presetChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  presetChipTextActive: {
+    color: '#FFFFFF',
+  },
+  balanceNote: {
+    fontSize: 12,
+    color: '#D97706',
+    fontWeight: '700',
+    marginBottom: 16,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  modalCancelText: {
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  modalSaveBtn: {
+    backgroundColor: '#4F46E5',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalSaveText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  friendWidgetCenter: {
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  friendWidgetAvatar: {
+    fontSize: 54,
+    marginBottom: 8,
+  },
+  friendWidgetStage: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  friendWidgetHealth: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#10B981',
+    marginBottom: 8,
+  },
+  friendWidgetHint: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 16,
+    paddingHorizontal: 16,
   },
 });
