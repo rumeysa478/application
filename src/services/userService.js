@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { apiConnectFriend, apiTransferPoints } from './api';
 
 const USER_PROFILE_KEY = '@habitime_user_profile';
 
@@ -281,6 +282,17 @@ export const sendPointsToFriend = async (friendId, amount = 25) => {
       friends: updatedFriends,
     });
 
+    // Backend'e de aktarmayı dene (varsa)
+    try {
+      await apiTransferPoints({
+        receiverUsername: friend.username,
+        receiverId: friend.id,
+        points: pts,
+      });
+    } catch (apiErr) {
+      console.log('Backend puan transferi çevrimdışı fallbackte:', apiErr.message);
+    }
+
     return {
       success: true,
       sentAmount: pts,
@@ -309,6 +321,13 @@ export const addFriend = async (friendCodeOrName) => {
       (f) => f.friendCode.toUpperCase() === query || f.username.toUpperCase() === query
     );
     if (alreadyAdded) throw new Error('Bu kullanıcı zaten listenizde ekli.');
+
+    // Backend'e bağlanmayı dene (varsa)
+    try {
+      await apiConnectFriend({ username: query });
+    } catch (apiErr) {
+      console.log('Backend arkadaş bağlantısı çevrimdışı fallbackte:', apiErr.message);
+    }
 
     const newFriend = {
       id: 'friend_' + Date.now().toString(36),

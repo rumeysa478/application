@@ -1,6 +1,7 @@
 import { getUserProfile, awardTop10Bonus } from './userService';
+import { apiGetLeaderboard } from './api';
 
-// Simüle edilmiş haftalık global yarışmacılar
+// Simüle edilmiş haftalık global yarışmacılar (Çevrimdışı/Yerel fallback için)
 const WEEKLY_GLOBAL_PARTICIPANTS = [
   { id: 'gp-1', username: 'Merve_Hydra', avatar: '💧', score: 1420, isUser: false },
   { id: 'gp-2', username: 'Kaan_Fit', avatar: '⚡', score: 1350, isUser: false },
@@ -17,36 +18,77 @@ const WEEKLY_GLOBAL_PARTICIPANTS = [
 ];
 
 /**
- * KURAL 4: HAFTALIK YARIŞMA, EŞİT PUANDA %10 DİLİM VE 2X ÖDÜLÜ
+ * KURAL 4 & VERİTABANI BAĞLANTISI: HAFTALIK YARIŞMA VE %10 DİLİM (2X ÖDÜLÜ)
  *
- * Sıralamada üst %10'luk dilim:
- *   topCount = Math.max(1, Math.ceil(N * 0.10))
- * Sınır puanı:
- *   cutoffScore = ranked[topCount - 1].score
- * Eşit puan kuralı:
- *   Sınır puanına eşit veya büyük olan HERKES avantajı alır!
+ * 1. Öncelikle PostgreSQL backend API'sinden güncel skor tablosunu çeker.
+ * 2. Sunucu çevrimdışıysa mevcut yerel AsyncStorage ve simülasyon verisini kesintisiz kullanır.
+ * 3. Üst %10 hesaplaması:
+ *    topCount = Math.max(1, Math.ceil(N * 0.10))
+ *    Eşit puanda olan herkes avantajlı olarak %10 dilime dahil edilir.
  */
 export const getWeeklyLeaderboard = async () => {
   const profile = await getUserProfile();
   const userScore = profile?.weeklyChallengeScore || 0;
 
+  // 1. Backend PostgreSQL API'sinden çekmeyi dene
+  try {
+    const apiResult = await apiGetLeaderboard();
+    if (apiResult.success && Array.isArray(apiResult.leaderboard) && apiResult.leaderboard.length > 0) {
+      const finalLeaderboard = apiResult.leaderboard.map((item) => ({
+        id: item.userId || `user_${item.rank}`,
+        username: item.username,
+        avatar: item.isCurrentUser ? (profile?.avatar || '🌟') : '👥',
+        score: item.points,
+        rank: item.rank,
+        isUser: item.isCurrentUser,
+        isTop10: item.isInTop10Percent,
+        hasDoublePointsNextDay: item.hasDoublePointsNextDay,
+        widgetStatus: {
+          tierId: profile?.activeWidgetId || 'flower_tier_1',
+          health: profile?.widgetHealth || 65,
+          label: item.isInTop10Percent ? 'Şampiyon 🌟' : 'Büyüyor 🌱',
+        },
+      }));
+
+      const N = apiResult.totalParticipants || finalLeaderboard.length;
+      const userIndex = finalLeaderboard.findIndex((e) => e.isUser);
+      const userRank = userIndex !== -1 ? userIndex + 1 : 1;
+      const percentile = Math.max(1, Math.round((userRank / Math.max(1, N)) * 100));
+      const isTop10Percent = userIndex !== -1 ? finalLeaderboard[userIndex].isTop10 : false;
+
+      return {
+        leaderboard: finalLeaderboard,
+        totalParticipants: N,
+        topCount: apiResult.top10Count,
+        cutoffScore: apiResult.top10ThresholdScore,
+        isTop10Percent,
+        userRank,
+        percentile,
+        userScore,
+        isDbOnline: true,
+      };
+    }
+  } catch (apiErr) {
+    console.log('Backend liderlik tablosu çağrısı yerel moda devredildi:', apiErr.message);
+  }
+
+  // 2. Çevrimdışı / Yerel Fallback Akışı
   const currentUserEntry = {
-    id: profile.id,
-    username: profile.username || 'Sen',
-    avatar: profile.avatar || '🌟',
+    id: profile?.id || 'current_user',
+    username: profile?.username || 'Sen',
+    avatar: profile?.avatar || '🌟',
     score: userScore,
     isUser: true,
-    friendCode: profile.friendCode,
-    isDoublePointsActive: profile.isDoublePointsActiveToday,
+    friendCode: profile?.friendCode,
+    isDoublePointsActive: profile?.isDoublePointsActiveToday,
     widgetStatus: {
-      tierId: profile.activeWidgetId || 'flower_tier_1',
-      health: profile.widgetHealth || 35,
+      tierId: profile?.activeWidgetId || 'flower_tier_1',
+      health: profile?.widgetHealth || 35,
       label: 'Büyüyor 🌱',
     },
   };
 
-  // Arkadaşları da listeye ekle
-  const friendsEntries = (profile.friends || []).map((f) => ({
+  const friendsEntries = (profile?.friends || []).map((f) => ({
     id: f.id,
     username: f.username,
     avatar: f.avatar || '👥',
@@ -59,26 +101,18 @@ export const getWeeklyLeaderboard = async () => {
 
   const allEntries = [currentUserEntry, ...friendsEntries, ...WEEKLY_GLOBAL_PARTICIPANTS];
 
-  // Puana göre büyükten küçüğe sırala
   const sorted = allEntries.sort((a, b) => b.score - a.score);
-
-  // Sıralamayı belirle
   const ranked = sorted.map((entry, index) => ({
     ...entry,
     rank: index + 1,
   }));
 
   const N = ranked.length;
-  // Üst %10 kişi sayısı
   const topCount = Math.max(1, Math.ceil(N * 0.1));
-
-  // Sınır çizgisindeki eşik puanı (Cutoff Score)
   const cutoffScore = ranked[topCount - 1]?.score || 0;
 
-  // Eşit puan kuralı: cutoffScore ile eşit olan HERKES üst %10'dadır!
   const isTop10Percent = userScore >= cutoffScore && userScore > 0;
 
-  // Her yarışmacıya üst %10 etiketini işle
   const finalLeaderboard = ranked.map((item) => ({
     ...item,
     isTop10: item.score >= cutoffScore && item.score > 0,
@@ -87,6 +121,19 @@ export const getWeeklyLeaderboard = async () => {
   const userIndex = finalLeaderboard.findIndex((e) => e.isUser);
   const userRank = userIndex !== -1 ? userIndex + 1 : finalLeaderboard.length;
   const percentile = Math.max(1, Math.round((userRank / N) * 100));
+
+  return {
+    leaderboard: finalLeaderboard,
+    totalParticipants: N,
+    topCount,
+    cutoffScore,
+    isTop10Percent,
+    userRank,
+    percentile,
+    userScore,
+    isDbOnline: false,
+  };
+};
 
   // Üst %10'a giren kullanıcıya 2x bonusunu tanımla
   if (isTop10Percent && !profile.hasDoublePointsNextDay) {

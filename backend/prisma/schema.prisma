@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum HabitType {
+  WATER
+  MEDICATION
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+}
+
+model User {
+  id                     String         @id @default(cuid())
+  username               String         @unique
+  email                  String         @unique
+  passwordHash           String
+  age                    Int?
+  heightCm               Int?
+  weightKg               Float?
+  recommendedWaterLiters Float?
+  totalScore             Int            @default(0)
+  hasDoublePointsNextDay Boolean        @default(false)
+  createdAt              DateTime       @default(now())
+
+  habits                 Habit[]
+  verificationLogs       VerificationLog[]
+  weeklyScores           WeeklyScore[]
+  sentFriendships        Friendship[]   @relation("FriendshipRequester")
+  receivedFriendships    Friendship[]   @relation("FriendshipAddressee")
+  sentTransfers          PointTransfer[] @relation("TransferSender")
+  receivedTransfers      PointTransfer[] @relation("TransferReceiver")
+}
+
+model Friendship {
+  id          String           @id @default(cuid())
+  requesterId String
+  addresseeId String
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+
+  requester   User             @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee   User             @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+}
+
+model PointTransfer {
+  id         String   @id @default(cuid())
+  senderId   String
+  receiverId String
+  points     Int
+  createdAt  DateTime @default(now())
+
+  sender     User     @relation("TransferSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   User     @relation("TransferReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+}
+
+model Habit {
+  id                  String    @id @default(cuid())
+  userId              String
+  type                HabitType
+  title               String
+  dailyTargetLiters   Float?
+  consumedTodayLiters Float     @default(0)
+  intervalMinutes     Int?
+  snoozeMinutes       Int
+  maxSnoozes          Int       @default(3)
+  snoozeCount         Int       @default(0)
+  scheduleJson        Json
+  isCompletedToday    Boolean   @default(false)
+  lastVerifiedAt      DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationLog {
+  id         String    @id @default(cuid())
+  userId     String
+  habitId    String
+  habitType  HabitType
+  isExtra    Boolean   @default(false)
+  pointsWon  Int
+  verifiedAt DateTime  @default(now())
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WeeklyChallenge {
+  id        String        @id @default(cuid())
+  title     String
+  startsAt  DateTime
+  endsAt    DateTime
+  isActive  Boolean       @default(true)
+  scores    WeeklyScore[]
+}
+
+model WeeklyScore {
+  id          String          @id @default(cuid())
+  challengeId String
+  userId      String
+  points      Int             @default(0)
+  updatedAt   DateTime        @updatedAt
+
+  challenge   WeeklyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, userId])
+}

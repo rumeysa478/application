@@ -592,10 +592,33 @@ export default function HomeScreen({ navigation }) {
         </View>
       )}
 
-      {/* Yaşayan Maskot Widget'ı */}
+      {/* Yaşayan Maskot Widget'ı (Özel Tasarım SVG & Akıcı Animasyonlar) */}
       <LivingWidget
-        activeWidgetId={profile?.activeWidgetId || 'flower_tier_1'}
-        healthPercent={profile?.widgetHealth || 45}
+        activeWidgetId={
+          profile?.activeWidgetId ||
+          (habits.some((h) => h.type === 'medication') && !habits.some((h) => h.type === 'water' || !h.type)
+            ? 'healer_tier_1'
+            : 'flower_tier_1')
+        }
+        healthPercent={profile?.widgetHealth || 65}
+        progressPercent={
+          Math.min(
+            100,
+            Math.round(
+              ((habits.find((h) => h.type === 'water' || !h.type)?.todayIntakeLiters || 0) /
+                (habits.find((h) => h.type === 'water' || !h.type)?.dailyTargetLiters || 2.5)) *
+                100
+            )
+          )
+        }
+        totalIntake={habits.find((h) => h.type === 'water' || !h.type)?.todayIntakeLiters || 0}
+        targetIntake={habits.find((h) => h.type === 'water' || !h.type)?.dailyTargetLiters || 2.5}
+        dosesToday={habits.find((h) => h.type === 'medication')?.dosesToday || 0}
+        targetDoses={
+          habits.find((h) => h.type === 'medication')?.targetDoses ||
+          habits.find((h) => h.type === 'medication')?.medicationTimes?.length ||
+          2
+        }
         onOpenShop={() => navigation.navigate('WidgetShop')}
         onQuickWater={handleQuickProof}
       />
