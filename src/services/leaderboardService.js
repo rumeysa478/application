@@ -20,7 +20,7 @@ const WEEKLY_GLOBAL_PARTICIPANTS = [
 /**
  * KURAL 4 & VERİTABANI BAĞLANTISI: HAFTALIK YARIŞMA VE %10 DİLİM (2X ÖDÜLÜ)
  *
- * 1. Öncelikle PostgreSQL backend API'sinden güncel skor tablosunu çeker.
+ * 1. Öncelikle PostgreSQL/SQLite backend API'sinden güncel skor tablosunu çeker.
  * 2. Sunucu çevrimdışıysa mevcut yerel AsyncStorage ve simülasyon verisini kesintisiz kullanır.
  * 3. Üst %10 hesaplaması:
  *    topCount = Math.max(1, Math.ceil(N * 0.10))
@@ -30,7 +30,7 @@ export const getWeeklyLeaderboard = async () => {
   const profile = await getUserProfile();
   const userScore = profile?.weeklyChallengeScore || 0;
 
-  // 1. Backend PostgreSQL API'sinden çekmeyi dene
+  // 1. Backend API'sinden çekmeyi dene
   try {
     const apiResult = await apiGetLeaderboard();
     if (apiResult.success && Array.isArray(apiResult.leaderboard) && apiResult.leaderboard.length > 0) {
@@ -56,8 +56,18 @@ export const getWeeklyLeaderboard = async () => {
       const percentile = Math.max(1, Math.round((userRank / Math.max(1, N)) * 100));
       const isTop10Percent = userIndex !== -1 ? finalLeaderboard[userIndex].isTop10 : false;
 
+      // Üst %10'a giren kullanıcıya 2x bonusunu tanımla
+      if (isTop10Percent && !profile?.hasDoublePointsNextDay) {
+        try {
+          await awardTop10Bonus();
+        } catch (e) {
+          console.warn('Top 10 bonus ödülü kaydedilirken hata:', e.message);
+        }
+      }
+
       return {
         leaderboard: finalLeaderboard,
+        totalCount: N,
         totalParticipants: N,
         topCount: apiResult.top10Count,
         cutoffScore: apiResult.top10ThresholdScore,
@@ -65,6 +75,7 @@ export const getWeeklyLeaderboard = async () => {
         userRank,
         percentile,
         userScore,
+        userEntry: userIndex !== -1 ? finalLeaderboard[userIndex] : null,
         isDbOnline: true,
       };
     }
@@ -122,8 +133,18 @@ export const getWeeklyLeaderboard = async () => {
   const userRank = userIndex !== -1 ? userIndex + 1 : finalLeaderboard.length;
   const percentile = Math.max(1, Math.round((userRank / N) * 100));
 
+  // Üst %10'a giren kullanıcıya 2x bonusunu tanımla
+  if (isTop10Percent && !profile?.hasDoublePointsNextDay) {
+    try {
+      await awardTop10Bonus();
+    } catch (e) {
+      console.warn('Top 10 bonus ödülü kaydedilirken hata:', e.message);
+    }
+  }
+
   return {
     leaderboard: finalLeaderboard,
+    totalCount: N,
     totalParticipants: N,
     topCount,
     cutoffScore,
@@ -131,24 +152,8 @@ export const getWeeklyLeaderboard = async () => {
     userRank,
     percentile,
     userScore,
+    userEntry: userIndex !== -1 ? finalLeaderboard[userIndex] : null,
     isDbOnline: false,
-  };
-};
-
-  // Üst %10'a giren kullanıcıya 2x bonusunu tanımla
-  if (isTop10Percent && !profile.hasDoublePointsNextDay) {
-    await awardTop10Bonus();
-  }
-
-  return {
-    leaderboard: finalLeaderboard,
-    userRank,
-    totalCount: N,
-    topCount,
-    cutoffScore,
-    percentile,
-    isTop10Percent,
-    userEntry: finalLeaderboard[userIndex],
   };
 };
 
