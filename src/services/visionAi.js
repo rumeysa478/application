@@ -3,8 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const API_KEY_STORAGE_KEY = '@habitime_gemini_api_key';
 const CACHED_MODEL_KEY = '@habitime_gemini_model';
 
-// Hedef model: gemini-2.5-flash (tüm sistemde tek ve kararlı model)
-export const TARGET_MODEL = 'gemini-2.5-flash';
+// Hedef model: gemini-3.5-flash-lite (en güncel ve kararlı model)
+export const TARGET_MODEL = 'gemini-3.5-flash-lite';
+export const FALLBACK_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
 
 // Ortam değişkeninden veya varsayılan anahtar
 export const DEFAULT_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
@@ -182,35 +183,49 @@ veya içecek kabı yoksa:
     },
   };
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${TARGET_MODEL}:generateContent`;
+  let lastErrorDetail = '';
 
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify(requestBody),
-    });
+  for (const model of FALLBACK_MODELS) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error(`Gemini Vision API Hatası [Model: ${TARGET_MODEL}, HTTP ${response.status}]:`, errorBody);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify(requestBody),
+      });
 
-      let parsedMsg = `HTTP ${response.status}`;
-      try {
-        const errJson = JSON.parse(errorBody);
-        parsedMsg = errJson?.error?.message || parsedMsg;
-      } catch {}
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error(`Gemini Vision API Hatası [Model: ${model}, HTTP ${response.status}]:`, errorBody);
 
-      return {
-        success: false,
-        containsWaterContainer: false,
-        isNetworkError: true,
-        message: `Gemini API Hatası [Model: ${TARGET_MODEL}] (${parsedMsg}). Lütfen API anahtarınızı veya izinlerinizi kontrol edin.`,
-      };
-    }
+        let parsedMsg = `HTTP ${response.status}`;
+        try {
+          const errJson = JSON.parse(errorBody);
+          parsedMsg = errJson?.error?.message || parsedMsg;
+        } catch {}
+
+        lastErrorDetail = `${model}: ${parsedMsg}`;
+
+        // 404 veya 503 ise sonraki adayı dene
+        if (response.status === 404 || response.status === 503) {
+          console.warn(`Model ${model} ${response.status} döndürdü, bir sonraki model deneniyor...`);
+          continue;
+        }
+
+        return {
+          success: false,
+          containsWaterContainer: false,
+          isNetworkError: true,
+          message: `Gemini API Hatası [Model: ${model}] (${parsedMsg}). Lütfen API anahtarınızı veya izinlerinizi kontrol edin.`,
+        };
+      }
+
+      // Başarılı!
+      await AsyncStorage.setItem(CACHED_MODEL_KEY, model);
 
     const data = await response.json();
     const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
@@ -280,12 +295,15 @@ veya içecek kabı yoksa:
       message: reason,
     };
   } catch (netErr) {
-    console.error(`Gemini Vision API [Model: ${TARGET_MODEL}] ağ çağrısı istisnası:`, netErr);
-    return {
-      success: false,
-      containsWaterContainer: false,
-      isNetworkError: true,
-      message: `Gemini Vision API bağlantısı sağlanamadı [Model: ${TARGET_MODEL}] (${netErr.message || 'Ağ bağlantı hatası'}). Lütfen internetinizi ve API anahtarınızı kontrol edin.`,
-    };
+    console.error(`Gemini Vision API [Model: ${model}] ağ çağrısı istisnası:`, netErr);
+    lastErrorDetail = `${model}: ${netErr.message || 'Ağ bağlantı hatası'}`;
   }
+}
+
+return {
+  success: false,
+  containsWaterContainer: false,
+  isNetworkError: true,
+  message: `Gemini Vision API bağlantısı sağlanamadı [Model: ${TARGET_MODEL}] (${lastErrorDetail}). Lütfen internetinizi ve API anahtarınızı kontrol edin.`,
+};
 };
