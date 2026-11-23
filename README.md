@@ -1,42 +1,44 @@
-# ⏰ Habitime - Zorlayıcı Alışkanlık Takip Uygulaması
+# ⏰ Habitime - Yapay Zekâ Destekli Zorlayıcı Alışkanlık Takip Uygulaması
 
 <p align="center">
-  <b>Ertelemeye son veren, fotoğraf doğrulamalı akıllı alışkanlık takip asistanı.</b>
+  <b>Ertelemeye son veren, Vision AI (Yapay Zekâ) ile su kabı doğrulamalı akıllı alışkanlık takip asistanı.</b>
 </p>
 
 ---
 
 ## 📖 Proje Hakkında
 
-**Habitime**, özellikle su içme, düzenli ilaç alma, egzersiz yapma gibi kritik günlük rutinleri aksatmadan yerine getirmeyi sağlayan **zorlayıcı bir alışkanlık takip mobil uygulamasıdır**. 
+**Habitime**, özellikle günlük su tüketimi ve düzenli rutinleri aksatmadan yerine getirmeyi sağlayan **yapay zekâ destekli ve zorlayıcı bir mobil takip uygulamasıdır**.
 
-Geleneksel takip uygulamalarının aksine, sadece bildirim göndermekle kalmaz; kullanıcının görevi gerçekten tamamladığını **kamera ile kanıt fotoğrafı alarak** doğrular. Erteleme mekanizması sınırlandırılmış olup, süre dolduğunda kullanıcı görevi yerine getirene kadar uyarı vermeye devam eder.
+Geleneksel takip uygulamalarının aksine sadece bildirim göndermekle kalmaz; kullanıcının su içtiğini **kamera ve Vision AI (Google Gemini API)** aracılığıyla kadrajdaki su bardağını, şişesini veya matarasını analiz ederek doğrular. 
+
+Erteleme mekanizması sınırlandırılmış olup, süre dolduğunda kullanıcı görevi yerine getirene kadar uyarı vermeye devam eder. Ayrıca uyku saatlerini koruyan gün bazlı akıllı saat aralıkları ve litre bazlı günlük hedef takibi sunar.
 
 ---
 
 ## ✨ Temel Özellikler
 
-- 🔔 **Zamanlanmış Bildirimler:** Belirlenen saatlerde ve periyotlarda kullanıcıya hedefe özel hatırlatıcı bildirimler gönderilir.
-- ⏳ **Sınırlı Erteleme (Snooze) Mekanizması:** 
-  - Görev başına en fazla **3 kez** erteleme hakkı.
-  - Her erteleme süresi **30 dakika** ile sınırlandırılmıştır.
-- 🚨 **Zorlayıcı Uyarı & Alarm:** Erteleme hakları tükendiğinde veya süre bittiğinde, kanıt fotoğrafı çekilene kadar devam eden sürekli titreşim ve bildirim uyarıları devreye girer.
-- 📸 **Kamera ile Kanıt Doğrulaması:** Kullanıcı görevi tamamladığını belgelemek için uygulama içi kamera ile anlık kanıt fotoğrafı çekmek zorundadır (örneğin: su bardağı, ilaç kutusu).
-- 💡 **"Biliyor Muydunuz?" Bilgi Kartları:** Bildirim içeriklerinde ve görev ekranlarında kullanıcıyı motive eden, alışkanlıkla ilgili kısa gündem özetleri ve faydalı bilimsel ipuçları ("Biliyor muydunuz?").
+- 🤖 **Vision AI ile Su Kabı Doğrulaması:** Fotoğraf çekildiğinde rastgele bir görüntü kabul edilmez; yapay zekâ (Google Gemini 1.5 Flash Vision API) karede su bardağı, şişe veya matara olup olmadığını analiz eder. Yalnızca geçerli kanıtlar onaylanır.
+- 🔒 **Gizlilik Odaklı Geçici Veri Temizliği:** Kanıt fotoğrafları cihazda veya sunucuda kalıcı olarak depolanmaz; doğrulama sonrası fotoğraf verisi bellekten temizlenir, yalnızca zaman damgası ve tüketim miktarı kaydedilir.
+- 💧 **Günlük Su Hedefi & İlerleme Takibi:** Kullanıcı günlük su hedefini (örn. 2.5 Litre) ve bardak porsiyonunu (örn. 250 ml) belirler. Her doğrulamada su miktarı eklenir ve hedef dolmadan gün tamamlandı sayılmaz.
+- 📅 **Gün Bazlı Çalışma Saatleri & Uyku Modu Koruması:** Haftanın her günü (Pazartesi–Pazar) için ayrı başlangıç ve bitiş saatleri (örn. 09:00 – 23:00) ayarlanabilir. Uyku saatlerinde alarmlar ve zorlayıcı mod devreye girmez.
+- ✏️ **Alışkanlık Düzenleme Ekranı (`EditHabitScreen`):** Alışkanlık adı, tekrar sıklığı, günlük hedef ve haftalık saatler istendiği an güncellenebilir.
+- ⏳ **Sınırlı Erteleme (Snooze) Mekanizması:** En fazla **3 kez 30'ar dakika** erteleme hakkı.
+- 🚨 **Zorlayıcı Alarm & Titreşim:** Erteleme hakları tükendiğinde, su kabı kanıtı onaylanana kadar devam eden sürekli titreşimli zorunlu mod devreye girer.
+- 💡 **"Biliyor Muydunuz?" Bilgi Kartları:** Bildirimlerde ve görev ekranlarında kullanıcıyı motive eden 16+ bilimsel ve psikolojik hap bilgi.
 
 ---
 
 ## 🛠️ Teknoloji Stoku
 
-Habitime, modern mobil geliştirme ekosisteminin güçlü araçlarıyla inşa edilmiştir:
-
 | Teknoloji / Kütüphane | Kullanım Amacı |
 | :--- | :--- |
-| **React Native (Expo)** | Çapraz platform (iOS & Android) mobil uygulama çatısı |
-| **Expo Camera** | Görev tamamlama kanıt fotoğraflarının çekimi ve kamera yönetimi |
+| **React Native (Expo SDK 58)** | Çapraz platform (iOS & Android) mobil uygulama çatısı |
+| **Expo Camera (`CameraView`)** | Kamera önizlemesi ve anlık kanıt fotoğrafı çekimi |
+| **Google Gemini Vision API** | Çekilen fotoğrafta su bardağı/kabı varlığını tespit eden yapay zekâ |
 | **Expo Notifications** | Yerel zamanlanmış bildirimler ve uyarı yönetimi |
-| **AsyncStorage** | Alışkanlık verileri, erteleme sayaçları ve yerel durum saklama |
-| **React Navigation** | Ekranlar arası akıcı geçişler ve stack navigasyon yönetimi |
+| **AsyncStorage** | Alışkanlık verileri, günlük su tüketimi ve API anahtarı depolama |
+| **React Navigation (Native Stack)** | Ekranlar arası akıcı geçişler ve modal yönetimi |
 
 ---
 
@@ -44,61 +46,50 @@ Habitime, modern mobil geliştirme ekosisteminin güçlü araçlarıyla inşa ed
 
 ```text
 Habitime/
-├── assets/                  # İkonlar, görseller ve statik dosyalar
 ├── src/
-│   ├── components/          # Yeniden kullanılabilir UI bileşenleri (Butonlar, Kartlar vb.)
-│   ├── data/                # Statik veriler ("Biliyor muydunuz?" içerikleri vb.)
-│   ├── screens/             # Uygulama ekranları (Ana Sayfa, Kamera, Detay vb.)
-│   └── services/            # Bildirim, depolama ve kamera servis mantığı
-├── App.js                   # Uygulama giriş noktası ve navigasyon kapsayıcısı
-├── app.json                 # Expo yapılandırma dosyası
-├── package.json             # Bağımlılıklar ve npm betikleri
-└── README.md                # Proje dokümantasyonu
+│   ├── data/
+│   │   └── didYouKnow.js            # "Biliyor muydunuz?" bilgi havuzu (16+ bilimsel not)
+│   ├── screens/
+│   │   ├── HomeScreen.js            # Ana ekran, su ilerleme çubuğu ve kart listesi
+│   │   ├── AddHabitScreen.js        # Yeni alışkanlık, hedef ve haftalık saat tanımlama
+│   │   ├── EditHabitScreen.js       # Alışkanlık düzenleme ekranı
+│   │   └── CameraProofScreen.js     # Kamera önizleme ve Vision AI doğrulama ekranı
+│   └── services/
+│       ├── visionAi.js              # Gemini Vision API ile su kabı analiz servisi
+│       ├── storage.js               # AsyncStorage CRUD, su tüketimi ve saat aralığı kontrolü
+│       ├── notifications.js         # Bildirim ve erteleme planlama servisi
+│       └── vibration.js             # Kesintisiz titreşim ve alarm servisi
+├── App.js                           # NavigationContainer ve Stack Navigator
+├── app.json                         # Expo yapılandırması ve kamera izin eklentileri
+├── package.json                     # Bağımlılıklar
+└── README.md                        # Proje dokümantasyonu
 ```
 
 ---
 
 ## 🚀 Kurulum ve Çalıştırma
 
-Projeyi yerel geliştirme ortamınızda ayağa kaldırmak için aşağıdaki adımları izleyin:
-
 ### 1. Ön Gereksinimler
 - Sisteminizde **Node.js** (v18 veya üzeri) kurulu olmalıdır.
-- Test için fiziksel cihazınızda **Expo Go** uygulaması (Android / iOS) veya yüklü bir emülatör bulunmalıdır.
+- Test için fiziksel cihazınızda **Expo Go** uygulaması veya yüklü bir emülatör bulunmalıdır.
 
-### 2. Projeyi Klonlayın ve Bağımlılıkları Yükleyin
+### 2. Projeyi Klonlayın ve Başlatın
 ```bash
 # Repoyu klonlayın
 git clone https://github.com/rumeysa478/application.git
 cd application
 
-# Bağımlılıkları yükleyin (mevcut değilse)
+# Bağımlılıkları yükleyin
 npm install
-```
 
-### 3. Uygulamayı Başlatın
-```bash
+# Uygulamayı başlatın
 npx expo start
 ```
 
-Uygulama başladığında terminalde bir QR kod görüntülenecektir:
-- **Fiziksel Cihaz:** Expo Go uygulaması ile QR kodu taratarak projeyi anında test edebilirsiniz.
-- **Android Emülatör:** Terminalde `a` tuşuna basın.
-- **iOS Simülatör (macOS):** Terminalde `i` tuşuna basın.
-- **Web:** Terminalde `w` tuşuna basın.
-
----
-
-## 📋 Geliştirme Yol Haritası
-
-- [x] Expo altyapısının ve temel paketlerin kurulumu
-- [x] Temiz mimari klasör yapısının (`src/`) oluşturulması
-- [x] Proje konsepti ve dokümantasyonun hazırlanması
-- [ ] Navigasyon ve temel ekran tasarımlarının (Screens) kodlanması
-- [ ] Bildirim ve erteleme (Snooze) servislerinin entegrasyonu
-- [ ] Kamera doğrulama modülünün uygulanması
-- [ ] "Biliyor muydunuz?" veri setinin ve dinamik gösteriminin eklenmesi
-- [ ] Testler ve kullanıcı deneyimi optimizasyonları
+### 3. Yapay Zekâ (Gemini API) Anahtarını Tanımlama
+- Google AI Studio'dan (`aistudio.google.com`) ücretsiz Gemini API anahtarı alabilirsiniz.
+- Uygulama içinde **"🔑 AI Anahtarı"** butonuna dokunarak anahtarınızı yapıştırabilirsiniz.
+- API anahtarı girilmediğinde veya internet olmadığında uygulama çökmez; otomatik olarak güvenli **manuel doğrulama** moduna geçer.
 
 ---
 

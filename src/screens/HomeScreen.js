@@ -7,7 +7,8 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
-  Image,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -15,6 +16,8 @@ import {
   deleteHabit,
   snoozeHabit,
   resetHabit,
+  isWithinActiveHours,
+  DAY_KEYS,
 } from '../services/storage';
 import {
   requestNotificationPermissions,
@@ -25,20 +28,32 @@ import {
   startPersistentVibration,
   stopVibration,
 } from '../services/vibration';
+import { getStoredApiKey, setStoredApiKey } from '../services/visionAi';
 
 export default function HomeScreen({ navigation }) {
   const [habits, setHabits] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [activeAlertHabit, setActiveAlertHabit] = useState(null);
 
+  // Gemini API Anahtarı Modalı
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [inputApiKey, setInputApiKey] = useState('');
+
   // Bildirim izinlerini kontrol et
   useEffect(() => {
     requestNotificationPermissions();
+    getStoredApiKey().then((k) => setInputApiKey(k || ''));
 
     return () => {
       stopVibration();
     };
   }, []);
+
+  const handleSaveApiKey = async () => {
+    await setStoredApiKey(inputApiKey);
+    setShowApiKeyModal(false);
+    Alert.alert('Başarılı', 'Gemini API Anahtarı kaydedildi!');
+  };
 
   // Ekran her odaklandığında listeyi güncelle
   const loadHabits = useCallback(async () => {
@@ -64,6 +79,15 @@ export default function HomeScreen({ navigation }) {
 
   // Erteleme (Snooze) Mantığı (Maksimum 3 kez)
   const handleSnooze = async (item) => {
+    // Uyku saatinde ise uyar
+    if (!isWithinActiveHours(item)) {
+      Alert.alert(
+        '💤 Uyku Modu',
+        `"${item.title}" şu an aktif çalışma saatleri (${getTodayHoursText(item)}) dışındadır. Uyku vaktinde bildirimler ve alarmlar sessize alınır.`
+      );
+      return;
+    }
+
     const currentSnooze = item.snoozeCount || 0;
 
     if (currentSnooze < 3) {
@@ -83,7 +107,6 @@ export default function HomeScreen({ navigation }) {
         console.error(error);
       }
     } else {
-      // 3 erteleme hakkı doldu! Zorunlu mod ve titreşim başlat
       triggerZorunluMod(item);
     }
   };
@@ -95,7 +118,7 @@ export default function HomeScreen({ navigation }) {
 
     Alert.alert(
       '🚨 ZORUNLU MOD BAŞLATILDI!',
-      `"${item.title}" için 3/3 erteleme hakkınız doldu!\n\nKanıt fotoğrafı çekilene kadar sürekli titreşim uyarısı devam edecektir. Durdurmak için kanıt kamerasına gidin.`,
+      `"${item.title}" için 3/3 erteleme hakkınız doldu!\n\nKamera ile su bardağı kanıtı onaylanana kadar titreşim uyarısı devam edecektir.`,
       [
         {
           text: '📸 Kanıt Fotoğrafı Çek',
@@ -114,13 +137,32 @@ export default function HomeScreen({ navigation }) {
     navigation.navigate('CameraProof', {
       habitId: item.id,
       habitTitle: item.title,
+      portionLiters: item.portionLiters || 0.25,
     });
   };
 
-  // Alışkanlığı Tekrar Başlat
+  // Alışkanlık Düzenleme Ekranına Yönlendirme
+  const handleEditHabit = (item) => {
+    navigation.navigate('EditHabit', { habit: item });
+  };
+
+  // Alışkanlığı Sıfırla
   const handleReset = async (item) => {
-    await resetHabit(item.id);
-    await loadHabits();
+    Alert.alert(
+      'Bugünü Sıfırla',
+      `"${item.title}" için bugünkü su tüketimini sıfırlayıp baştan başlatmak istiyor musunuz?`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sıfırla',
+          style: 'destructive',
+          onPress: async () => {
+            await resetHabit(item.id);
+            await loadHabits();
+          },
+        },
+      ]
+    );
   };
 
   // Alışkanlık Silme
@@ -149,7 +191,7 @@ export default function HomeScreen({ navigation }) {
   // Anında Bildirim Testi
   const handleTestNotification = async () => {
     try {
-      await sendInstantNotification('Habitime Hatırlatıcısı');
+      await sendInstantNotification('Habitime Su Hatırlatıcısı');
       Alert.alert(
         '🔔 Bildirim Gönderildi',
         'Bildirim merkezini / kilit ekranınızı kontrol edin. Rastgele bir "Biliyor muydunuz?" bilgisi içerir.'
@@ -172,11 +214,29 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+  // Bugünün çalışma saatini metin olarak al
+  const getTodayHoursText = (item) => {
+    if (!item?.daysConfig) return '09:00 - 23:00';
+    const dayKey = DAY_KEYS[new Date().getDay()];
+    const setting = item.daysConfig[dayKey];
+    if (!setting || !setting.active) return 'Bugün Pasif';
+    return `${setting.startHour || '09:00'} - ${setting.endHour || '23:00'}`;
+  };
+
   const renderHabitCard = ({ item }) => {
     const maxSnooze = item.maxSnooze || 3;
     const currentSnooze = item.snoozeCount || 0;
     const remainingSnooze = Math.max(0, maxSnooze - currentSnooze);
     const isAlertActive = activeAlertHabit && activeAlertHabit.id === item.id;
+
+    // Su İlerleme Hesaplaması
+    const targetLiters = Number(item.dailyTargetLiters) || 2.5;
+    const currentIntake = Number(item.todayIntakeLiters || 0);
+    const percentage = Math.min(100, Math.round((currentIntake / targetLiters) * 100));
+    const isGoalCompleted = currentIntake >= targetLiters;
+
+    // Çalışma saati kontrolü
+    const isWorkingHours = isWithinActiveHours(item);
 
     // Erteleme durumuna göre rozet rengi
     const snoozeBadgeColor =
@@ -188,26 +248,88 @@ export default function HomeScreen({ navigation }) {
 
     return (
       <View style={[styles.card, isAlertActive && styles.cardInAlert]}>
-        {/* Kart Başlığı ve Silme Butonu */}
+        {/* Kart Başlığı ve Eylem İkonları */}
         <View style={styles.cardHeader}>
           <View style={styles.titleContainer}>
             <Text style={styles.habitTitle}>{item.title}</Text>
             <Text style={styles.intervalText}>
-              ⏱️ Her {item.intervalMinutes} dakikada bir
+              ⏱️ Her {item.intervalMinutes} dk • Hedef: {targetLiters} L / gün
             </Text>
           </View>
-          <TouchableOpacity
-            style={styles.deleteButton}
-            onPress={() => handleDelete(item.id, item.title)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Text style={styles.deleteIcon}>🗑️</Text>
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              onPress={() => handleEditHabit(item)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={styles.actionIconText}>✏️</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              onPress={() => handleDelete(item.id, item.title)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={styles.actionIconText}>🗑️</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Günlük Su İlerleme Çubuğu */}
+        <View style={styles.progressContainer}>
+          <View style={styles.progressHeader}>
+            <Text style={styles.progressLabel}>
+              💧 Günlük Su Tüketimi:{' '}
+              <Text style={styles.progressBold}>
+                {currentIntake.toFixed(2)} / {targetLiters.toFixed(2)} L
+              </Text>
+            </Text>
+            <Text
+              style={[
+                styles.percentageText,
+                isGoalCompleted && styles.percentageTextSuccess,
+              ]}
+            >
+              %{percentage}
+            </Text>
+          </View>
+
+          {/* İlerleme Çubuğu */}
+          <View style={styles.progressBarBackground}>
+            <View
+              style={[
+                styles.progressBarFill,
+                { width: `${percentage}%` },
+                isGoalCompleted && styles.progressBarFillCompleted,
+              ]}
+            />
+          </View>
         </View>
 
         {/* Bilgilendirme Rozetleri */}
         <View style={styles.badgesRow}>
-          {!item.isCompleted && (
+          {/* Çalışma Saati Rozeti */}
+          <View
+            style={[
+              styles.badge,
+              isWorkingHours ? styles.activeHoursBadge : styles.sleepHoursBadge,
+            ]}
+          >
+            <Text
+              style={[
+                styles.badgeText,
+                isWorkingHours
+                  ? styles.activeHoursBadgeText
+                  : styles.sleepHoursBadgeText,
+              ]}
+            >
+              {isWorkingHours
+                ? `🕒 ${getTodayHoursText(item)}`
+                : `💤 Uyku Modu (${getTodayHoursText(item)})`}
+            </Text>
+          </View>
+
+          {/* Erteleme Rozeti */}
+          {!isGoalCompleted && (
             <View
               style={[
                 styles.badge,
@@ -218,19 +340,30 @@ export default function HomeScreen({ navigation }) {
               ]}
             >
               <Text style={[styles.badgeText, { color: snoozeBadgeColor }]}>
-                ⏳ Erteleme: {currentSnooze}/{maxSnooze} (Kalan: {remainingSnooze})
+                ⏳ Erteleme: {currentSnooze}/{maxSnooze}
               </Text>
             </View>
           )}
 
-          {item.isCompleted && (
+          {/* Hedef Tamamlandı Rozeti */}
+          {isGoalCompleted && (
             <View style={[styles.badge, styles.completedBadge]}>
               <Text style={styles.completedBadgeText}>
-                ✓ Bugün Doğrulandı {item.lastProofAt ? `(${formatProofTime(item.lastProofAt)})` : ''}
+                ✓ Günlük Hedefe Ulaşıldı! 🎉
               </Text>
             </View>
           )}
 
+          {/* Son Doğrulama Saati */}
+          {item.lastProofAt && (
+            <View style={[styles.badge, styles.timeBadge]}>
+              <Text style={styles.timeBadgeText}>
+                ✓ Son Kanıt: {formatProofTime(item.lastProofAt)}
+              </Text>
+            </View>
+          )}
+
+          {/* Zorunlu Mod Rozeti */}
           {isAlertActive && (
             <View style={[styles.badge, styles.alertBadge]}>
               <Text style={styles.alertBadgeText}>🚨 ZORUNLU MOD AKTİF</Text>
@@ -238,29 +371,25 @@ export default function HomeScreen({ navigation }) {
           )}
         </View>
 
-        {/* Aksiyon Butonları & Kanıt Önizleme */}
-        {item.isCompleted ? (
-          <View style={styles.completedArea}>
-            {item.lastProofUri && (
-              <View style={styles.proofPreviewRow}>
-                <Image
-                  source={{ uri: item.lastProofUri }}
-                  style={styles.proofThumbnail}
-                />
-                <View style={styles.proofDetails}>
-                  <Text style={styles.proofTitle}>📸 Kanıt Fotoğrafı Kayıtlı</Text>
-                  <Text style={styles.proofSubtitle}>
-                    Doğrulama zamanı: {formatProofTime(item.lastProofAt) || 'Bugün'}
-                  </Text>
-                </View>
-              </View>
-            )}
+        {/* Aksiyon Butonları */}
+        {isGoalCompleted ? (
+          <View style={styles.completedActionsRow}>
             <TouchableOpacity
-              style={styles.resetButton}
+              style={[styles.actionButton, styles.kanitlaButton]}
+              activeOpacity={0.8}
+              onPress={() => handleOpenProofCamera(item)}
+            >
+              <Text style={styles.kanitlaButtonText}>
+                📸 Ekstra Su Ekle (+{Math.round((item.portionLiters || 0.25) * 1000)}ml)
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.resetSmallButton}
               activeOpacity={0.8}
               onPress={() => handleReset(item)}
             >
-              <Text style={styles.resetButtonText}>🔄 Alışkanlığı Tekrar Başlat</Text>
+              <Text style={styles.resetSmallButtonText}>🔄 Sıfırla</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -276,7 +405,9 @@ export default function HomeScreen({ navigation }) {
               onPress={() => handleOpenProofCamera(item)}
             >
               <Text style={styles.kanitlaButtonText}>
-                {isAlertActive ? '📸 Sustur & Fotoğraf Çek' : '📸 Kanıtla'}
+                {isAlertActive
+                  ? '📸 Sustur & Fotoğraf Çek'
+                  : `📸 Kanıtla (+${Math.round((item.portionLiters || 0.25) * 1000)}ml)`}
               </Text>
             </TouchableOpacity>
 
@@ -316,7 +447,7 @@ export default function HomeScreen({ navigation }) {
               🚨 ZORUNLU MOD: Titreşim Aktif!
             </Text>
             <Text style={styles.alertBannerSubtitle}>
-              "{activeAlertHabit.title}" için 3 erteleme hakkı doldu. Fotoğraf çekene kadar devam eder.
+              "{activeAlertHabit.title}" için 3 erteleme bitti. Su bardağı fotoğrafı onaylanana kadar devam eder.
             </Text>
           </View>
           <TouchableOpacity
@@ -334,7 +465,7 @@ export default function HomeScreen({ navigation }) {
           style={styles.quickButton}
           onPress={handleTestNotification}
         >
-          <Text style={styles.quickButtonText}>🔔 Test Bildirimi Gönder</Text>
+          <Text style={styles.quickButtonText}>🔔 Bildirim Testi</Text>
         </TouchableOpacity>
 
         {habits.length > 0 && !activeAlertHabit && (
@@ -343,10 +474,19 @@ export default function HomeScreen({ navigation }) {
             onPress={() => triggerZorunluMod(habits[0])}
           >
             <Text style={[styles.quickButtonText, styles.quickButtonDangerText]}>
-              🚨 Alarmı Test Et
+              🚨 Alarm Testi
             </Text>
           </TouchableOpacity>
         )}
+
+        <TouchableOpacity
+          style={[styles.quickButton, styles.quickButtonAi]}
+          onPress={() => setShowApiKeyModal(true)}
+        >
+          <Text style={[styles.quickButtonText, styles.quickButtonAiText]}>
+            🔑 AI Anahtarı
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Alışkanlık Listesi */}
@@ -364,10 +504,10 @@ export default function HomeScreen({ navigation }) {
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>⏰</Text>
+            <Text style={styles.emptyIcon}>💧</Text>
             <Text style={styles.emptyTitle}>Henüz alışkanlık eklemediniz</Text>
             <Text style={styles.emptySubtitle}>
-              Su içme, ilaç alma veya egzersiz gibi rutinlerinizi eklemek için aşağıdaki "+" butonuna dokunun.
+              Günlük su hedefinizi belirlemek ve yapay zekâ doğrulamasıyla takip etmek için aşağıdaki "+" butonuna dokunun.
             </Text>
           </View>
         }
@@ -381,6 +521,48 @@ export default function HomeScreen({ navigation }) {
       >
         <Text style={styles.fabText}>+</Text>
       </TouchableOpacity>
+
+      {/* Gemini API Anahtarı Modalı */}
+      <Modal
+        visible={showApiKeyModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowApiKeyModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>🔑 Gemini Vision API Anahtarı</Text>
+            <Text style={styles.modalSubtitle}>
+              Google AI Studio'dan aldığınız ücretsiz Gemini API anahtarını girerek su bardağı/kabı doğrulamasını gerçek yapay zekâ ile gerçekleştirebilirsiniz.
+            </Text>
+
+            <TextInput
+              style={styles.modalInput}
+              placeholder="AIzaSy..."
+              placeholderTextColor="#94A3B8"
+              value={inputApiKey}
+              onChangeText={setInputApiKey}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setShowApiKeyModal(false)}
+              >
+                <Text style={styles.modalCancelText}>Kapat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalSaveBtn}
+                onPress={handleSaveApiKey}
+              >
+                <Text style={styles.modalSaveText}>Kaydet</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -397,10 +579,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
     elevation: 4,
   },
   alertBannerContent: {
@@ -439,14 +617,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#EEF2FF',
     paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     borderRadius: 10,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#C7D2FE',
   },
   quickButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#4338CA',
   },
@@ -456,6 +634,13 @@ const styles = StyleSheet.create({
   },
   quickButtonDangerText: {
     color: '#B91C1C',
+  },
+  quickButtonAi: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  quickButtonAiText: {
+    color: '#15803D',
   },
   listContent: {
     padding: 16,
@@ -468,10 +653,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
     elevation: 2,
   },
   cardInAlert: {
@@ -483,44 +664,106 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   titleContainer: {
     flex: 1,
     marginRight: 8,
   },
   habitTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: '#0F172A',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   intervalText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#64748B',
     fontWeight: '500',
   },
-  deleteButton: {
+  headerActions: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  actionIconBtn: {
     padding: 4,
   },
-  deleteIcon: {
-    fontSize: 16,
+  actionIconText: {
+    fontSize: 15,
+  },
+  progressContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: '#475569',
+  },
+  progressBold: {
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  percentageText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#3B82F6',
+  },
+  percentageTextSuccess: {
+    color: '#10B981',
+  },
+  progressBarBackground: {
+    height: 8,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#3B82F6',
+    borderRadius: 4,
+  },
+  progressBarFillCompleted: {
+    backgroundColor: '#10B981',
   },
   badgesRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
     marginBottom: 14,
   },
   badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 16,
     borderWidth: 1,
   },
   badgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
+  },
+  activeHoursBadge: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#86EFAC',
+  },
+  activeHoursBadgeText: {
+    color: '#166534',
+  },
+  sleepHoursBadge: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+  },
+  sleepHoursBadgeText: {
+    color: '#64748B',
   },
   completedBadge: {
     backgroundColor: '#DCFCE7',
@@ -528,8 +771,15 @@ const styles = StyleSheet.create({
   },
   completedBadgeText: {
     color: '#15803D',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
+  },
+  timeBadge: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+  },
+  timeBadgeText: {
+    color: '#475569',
   },
   alertBadge: {
     backgroundColor: '#FEE2E2',
@@ -537,43 +787,17 @@ const styles = StyleSheet.create({
   },
   alertBadgeText: {
     color: '#DC2626',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  completedArea: {
-    marginTop: 4,
-  },
-  proofPreviewRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    padding: 8,
-    marginBottom: 10,
-  },
-  proofThumbnail: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    marginRight: 10,
-    backgroundColor: '#CBD5E1',
-  },
-  proofDetails: {
-    flex: 1,
-  },
-  proofTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  proofSubtitle: {
     fontSize: 11,
-    color: '#64748B',
-    marginTop: 2,
+    fontWeight: '800',
   },
   actionButtonsRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
+  },
+  completedActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
   },
   actionButton: {
     flex: 1,
@@ -590,7 +814,7 @@ const styles = StyleSheet.create({
   },
   kanitlaButtonText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   erteleButton: {
@@ -600,7 +824,7 @@ const styles = StyleSheet.create({
   },
   erteleButtonText: {
     color: '#334155',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   erteleDisabledButton: {
@@ -612,17 +836,18 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     fontWeight: '700',
   },
-  resetButton: {
-    backgroundColor: '#F8FAFC',
+  resetSmallButton: {
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 10,
-    paddingVertical: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
     alignItems: 'center',
   },
-  resetButtonText: {
+  resetSmallButtonText: {
     color: '#475569',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
   emptyContainer: {
@@ -658,10 +883,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#4F46E5',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
     elevation: 8,
   },
   fabText: {
@@ -669,5 +890,62 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '400',
     lineHeight: 34,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  modalInput: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+    marginBottom: 18,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  modalCancelText: {
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  modalSaveBtn: {
+    backgroundColor: '#4F46E5',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+  },
+  modalSaveText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });

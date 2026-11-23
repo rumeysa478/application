@@ -8,29 +8,52 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { completeHabit } from '../services/storage';
+import { recordWaterIntakeProof } from '../services/storage';
 import { stopVibration } from '../services/vibration';
+import {
+  analyzeImageForWaterContainer,
+  getStoredApiKey,
+  setStoredApiKey,
+} from '../services/visionAi';
 
 export default function CameraProofScreen({ route, navigation }) {
-  const { habitId, habitTitle } = route.params || {};
+  const { habitId, habitTitle, portionLiters = 0.25 } = route.params || {};
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState('back');
   const [photo, setPhoto] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isCameraReady, setIsCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
+
+  // API Anahtarı Modal Durumu
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [inputApiKey, setInputApiKey] = useState('');
+
   const cameraRef = useRef(null);
 
-  // Ekran açıldığında aktif titreşimi sustur
+  // Ekran açıldığında aktif titreşimi sustur ve API anahtarını yükle
   useEffect(() => {
     stopVibration();
+    getStoredApiKey().then((k) => setInputApiKey(k || ''));
     return () => {
       stopVibration();
     };
   }, []);
 
-  // İzin henüz yüklenmediyse yükleme göstergesi
+  // API Anahtarını Kaydet
+  const handleSaveApiKey = async () => {
+    await setStoredApiKey(inputApiKey);
+    setShowApiKeyModal(false);
+    Alert.alert('Başarılı', 'Gemini API Anahtarı kaydedildi!');
+  };
+
+  // İzin yükleniyorsa
   if (!permission) {
     return (
       <View style={styles.centerContainer}>
@@ -40,14 +63,14 @@ export default function CameraProofScreen({ route, navigation }) {
     );
   }
 
-  // İzin verilmediyse izin isteme ekranı
+  // İzin verilmediyse
   if (!permission.granted) {
     return (
       <SafeAreaView style={styles.permissionContainer} edges={['top', 'bottom']}>
         <Text style={styles.permissionIcon}>📷</Text>
         <Text style={styles.permissionTitle}>Kamera İzni Gerekli</Text>
         <Text style={styles.permissionSubtitle}>
-          Habitime'ın zorlayıcı kanıt sistemini kullanabilmek için kamera erişimine izin vermelisiniz.
+          Habitime su kabınızı yapay zekâ ile doğrulayabilmek için kamera erişimine ihtiyaç duyar.
         </Text>
 
         <TouchableOpacity
@@ -55,7 +78,7 @@ export default function CameraProofScreen({ route, navigation }) {
           activeOpacity={0.8}
           onPress={requestPermission}
         >
-          <Text style={styles.permissionButtonText}>İzin Ver</Text>
+          <Text style={styles.permissionButtonText}>Kamera İzni Ver</Text>
         </TouchableOpacity>
 
         {/* Emülatör / Kamera donanımı olmayan ortamlar için test butonu */}
@@ -65,6 +88,7 @@ export default function CameraProofScreen({ route, navigation }) {
           onPress={() => {
             setPhoto({
               uri: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=600&auto=format&fit=crop&q=60',
+              base64: null,
             });
           }}
         >
@@ -75,13 +99,13 @@ export default function CameraProofScreen({ route, navigation }) {
           style={styles.cancelButton}
           onPress={() => navigation.goBack()}
         >
-          <Text style={styles.cancelButtonText}>Vazgeç</Text>
+          <Text style={styles.cancelButtonText}>Geri Dön</Text>
         </TouchableOpacity>
       </SafeAreaView>
     );
   }
 
-  // Fotoğraf Çekme Eylemi
+  // Fotoğraf Çekme
   const handleTakePhoto = async () => {
     if (isProcessing) return;
 
@@ -89,21 +113,27 @@ export default function CameraProofScreen({ route, navigation }) {
       setIsProcessing(true);
       if (cameraRef.current) {
         const captured = await cameraRef.current.takePictureAsync({
-          quality: 0.7,
+          quality: 0.5,
+          base64: true,
+          skipProcessing: false,
         });
+
         if (captured && captured.uri) {
           setPhoto(captured);
           return;
         }
       }
-      // Kamera ref yoksa veya emülatörse yedek fotoğraf kullan
+
+      // Kamera ref yoksa veya emülatörde donanım yoksa fallback
       setPhoto({
         uri: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=600&auto=format&fit=crop&q=60',
+        base64: null,
       });
     } catch (error) {
-      console.warn('Fotoğraf çekme uyarısı (emülatör olabilir):', error);
+      console.warn('Fotoğraf çekme hatası (emülatör olabilir):', error);
       setPhoto({
         uri: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=600&auto=format&fit=crop&q=60',
+        base64: null,
       });
     } finally {
       setIsProcessing(false);
@@ -115,73 +145,154 @@ export default function CameraProofScreen({ route, navigation }) {
     setFacing((current) => (current === 'back' ? 'front' : 'back'));
   };
 
-  // Kanıtı Onaylama ve Kaydetme
-  const handleConfirmProof = async () => {
+  // Yapay Zekâ Analizi ve Kanıt Onaylama
+  const handleVerifyAndConfirm = async () => {
     if (!habitId) {
       Alert.alert('Hata', 'Alışkanlık kimliği bulunamadı.');
       return;
     }
 
     try {
-      setIsProcessing(true);
-      stopVibration();
-      await completeHabit(habitId, photo?.uri);
+      setIsAnalyzing(true);
 
+      // Base64 verisi varsa Gemini Vision API ile incele
+      if (photo?.base64) {
+        const aiResult = await analyzeImageForWaterContainer(photo.base64);
+
+        // 1. Durum: Yapay zekâ nesneyi doğrulamadı (Su kabı yok)
+        if (!aiResult.containsWaterContainer && !aiResult.isApiKeyMissing && !aiResult.isNetworkError) {
+          Alert.alert(
+            '❌ Su Kabı Doğrulanamadı',
+            `Yapay zekâ karede bir su bardağı, su şişesi veya matara tespit edemedi.\n(Tespit: ${aiResult.detectedObject || 'Yok'})\n\nLütfen su kabınızı net gösterecek şekilde kadraja alın ve tekrar çekin.`,
+            [
+              {
+                text: 'Tekrar Fotoğraf Çek',
+                onPress: () => setPhoto(null),
+              },
+            ]
+          );
+          setIsAnalyzing(false);
+          return;
+        }
+
+        // 2. Durum: API anahtarı girilmemiş veya ağ hatası (Graceful Fallback)
+        if (aiResult.isApiKeyMissing || aiResult.isNetworkError) {
+          Alert.alert(
+            '⚠️ Yapay Zekâ Doğrulaması',
+            `${aiResult.message}\n\nKanıtınızı bu seferlik manuel olarak onaylamak ister misiniz?`,
+            [
+              {
+                text: 'Tekrar Çek',
+                style: 'cancel',
+                onPress: () => setPhoto(null),
+              },
+              {
+                text: '🔑 API Anahtarı Gir',
+                onPress: () => setShowApiKeyModal(true),
+              },
+              {
+                text: 'Manuel Onayla',
+                onPress: async () => {
+                  await finalizeIntake(portionLiters);
+                },
+              },
+            ]
+          );
+          setIsAnalyzing(false);
+          return;
+        }
+
+        // 3. Durum: Yapay zekâ su kabını başarıyla doğruladı!
+        if (aiResult.containsWaterContainer) {
+          await finalizeIntake(portionLiters, aiResult.detectedObject);
+          return;
+        }
+      } else {
+        // Test fotoğrafı (base64 yoksa) manuel onay akışı
+        await finalizeIntake(portionLiters, 'Test Su Kabı');
+      }
+    } catch (error) {
+      console.error('Doğrulama hatası:', error);
       Alert.alert(
-        '🎉 Kanıt Doğrulandı!',
-        `"${habitTitle || 'Alışkanlık'}" için kanıt fotoğrafı başarıyla kaydedildi ve görev tamamlandı!`,
+        'Hata',
+        'Analiz sırasında bir sorun oluştu. Manuel olarak onaylamak ister misiniz?',
         [
-          {
-            text: 'Tamam',
-            onPress: () => navigation.goBack(),
-          },
+          { text: 'Tekrar Çek', onPress: () => setPhoto(null) },
+          { text: 'Manuel Onayla', onPress: () => finalizeIntake(portionLiters) },
         ]
       );
-    } catch (error) {
-      Alert.alert('Hata', 'Kanıt onaylanırken bir sorun oluştu.');
-      console.error(error);
     } finally {
-      setIsProcessing(false);
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Su tüketimini kaydet ve ekranı kapat
+  const finalizeIntake = async (amount, detectedName = null) => {
+    stopVibration();
+    const result = await recordWaterIntakeProof(habitId, amount);
+
+    // Geçici fotoğrafı temizle
+    setPhoto(null);
+
+    const amountMl = Math.round(amount * 1000);
+    const totalIntake = result.habit.todayIntakeLiters;
+    const target = result.habit.dailyTargetLiters;
+
+    if (result.goalReached) {
+      Alert.alert(
+        '🎉 TEBRİKLER! GÜNLÜK HEDEF TAMAMLANDI!',
+        `Su kabı doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml eklendi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n\nBugünün su hedefini başarıyla tamamladınız!`,
+        [{ text: 'Harika!', onPress: () => navigation.goBack() }]
+      );
+    } else {
+      const remaining = (target - totalIntake).toFixed(2);
+      Alert.alert(
+        '✅ Su Tüketimi Onaylandı!',
+        `Su kabı başarıyla doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml kaydedildi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n(Hedefe kalan: ${remaining} L)`,
+        [{ text: 'Tamam', onPress: () => navigation.goBack() }]
+      );
     }
   };
 
   return (
     <View style={styles.container}>
       {photo ? (
-        // Fotoğraf Önizleme Ekranı
+        // Fotoğraf Çekildikten Sonraki Önizleme ve Doğrulama
         <View style={styles.previewContainer}>
           <Image source={{ uri: photo.uri }} style={styles.previewImage} />
 
           <SafeAreaView style={styles.previewOverlay} edges={['top', 'bottom']}>
-            {/* Üst Bilgi Başlığı */}
-            <View style={styles.previewOverlayHeader}>
-              <Text style={styles.previewHeaderTitle}>
-                📸 Kanıt Fotoğrafı Önizlemesi
-              </Text>
-              <Text style={styles.previewHeaderSubtitle}>
-                {habitTitle || 'Alışkanlık'} göreviniz için bu kanıtı onaylıyor musunuz?
+            <View style={styles.previewHeader}>
+              <Text style={styles.previewTitle}>📸 Kanıt Fotoğrafı Analizi</Text>
+              <Text style={styles.previewSubtitle}>
+                Yapay zekâ karede su bardağı veya matara olup olmadığını kontrol edecektir.
               </Text>
             </View>
 
-            {/* Alt Eylemler */}
+            {/* Alt Eylem Butonları */}
             <View style={styles.previewActions}>
               <TouchableOpacity
                 style={[styles.actionBtn, styles.retakeBtn]}
                 onPress={() => setPhoto(null)}
-                disabled={isProcessing}
+                disabled={isAnalyzing}
               >
                 <Text style={styles.retakeBtnText}>🔄 Tekrar Çek</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.actionBtn, styles.confirmBtn]}
-                onPress={handleConfirmProof}
-                disabled={isProcessing}
+                style={[styles.actionBtn, styles.verifyBtn]}
+                onPress={handleVerifyAndConfirm}
+                disabled={isAnalyzing}
               >
-                {isProcessing ? (
-                  <ActivityIndicator color="#FFFFFF" size="small" />
+                {isAnalyzing ? (
+                  <View style={styles.analyzingRow}>
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                    <Text style={styles.verifyBtnText}> AI İnceliyor...</Text>
+                  </View>
                 ) : (
-                  <Text style={styles.confirmBtnText}>✓ Kanıtı Onayla</Text>
+                  <Text style={styles.verifyBtnText}>
+                    🤖 Doğrula (+{Math.round(portionLiters * 1000)}ml)
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -189,15 +300,27 @@ export default function CameraProofScreen({ route, navigation }) {
         </View>
       ) : (
         // Canlı Kamera Ekranı
-        <View style={styles.cameraWrapper}>
-          {/* Kamera Arka Planı (Tam Ekran) */}
+        <View style={styles.cameraContainer}>
+          {/* Kamera Önizleme Yüzeyi */}
           <CameraView
-            style={StyleSheet.absoluteFillObject}
+            style={styles.cameraView}
             facing={facing}
+            mode="picture"
             ref={cameraRef}
+            onCameraReady={() => setIsCameraReady(true)}
+            onMountError={(e) => setCameraError(e.message)}
           />
 
-          {/* Kamera Üzerindeki Arayüz Katmanı */}
+          {/* Kamera Hatası Uyarısı (Gerekirse) */}
+          {cameraError && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorBannerText}>
+                ⚠️ Kamera uyarısı: {cameraError} (Test fotoğrafı kullanabilirsiniz)
+              </Text>
+            </View>
+          )}
+
+          {/* Kamera Kontrol Katmanı */}
           <SafeAreaView style={styles.cameraOverlay} edges={['top', 'bottom']}>
             {/* Üst Çubuk */}
             <View style={styles.topBar}>
@@ -209,27 +332,36 @@ export default function CameraProofScreen({ route, navigation }) {
               </TouchableOpacity>
 
               <View style={styles.guideBadge}>
-                <Text style={styles.guideText}>
-                  {habitTitle ? `🎯 ${habitTitle}` : '🎯 Kanıt Fotoğrafı'}
+                <Text style={styles.guideBadgeText}>
+                  {habitTitle || 'Su Kabı Doğrulama'}
                 </Text>
               </View>
 
-              <TouchableOpacity
-                style={styles.topBtn}
-                onPress={toggleCameraFacing}
-              >
-                <Text style={styles.topBtnText}>🔄 Çevir</Text>
-              </TouchableOpacity>
-            </View>
+              <View style={styles.topRightActions}>
+                <TouchableOpacity
+                  style={styles.keyBtn}
+                  onPress={() => setShowApiKeyModal(true)}
+                >
+                  <Text style={styles.keyBtnText}>🔑 AI</Text>
+                </TouchableOpacity>
 
-            {/* Kadraj Çerçevesi */}
-            <View style={styles.frameContainer}>
-              <View style={styles.focusFrame}>
-                <Text style={styles.frameHint}>Kanıtı çerçeveye yerleştirin</Text>
+                <TouchableOpacity
+                  style={styles.topBtn}
+                  onPress={toggleCameraFacing}
+                >
+                  <Text style={styles.topBtnText}>🔄</Text>
+                </TouchableOpacity>
               </View>
             </View>
 
-            {/* Alt Deklanşör Paneli (Sabit ve Yüksek Görünürlüklü) */}
+            {/* Merkez Hedef Çerçevesi */}
+            <View style={styles.frameContainer}>
+              <View style={styles.focusFrame}>
+                <Text style={styles.frameHint}>Su bardağı veya matarayı çerçeveye alın</Text>
+              </View>
+            </View>
+
+            {/* Alt Deklanşör Paneli */}
             <View style={styles.bottomBar}>
               <TouchableOpacity
                 style={styles.shutterOuter}
@@ -241,7 +373,7 @@ export default function CameraProofScreen({ route, navigation }) {
                   <ActivityIndicator color="#4F46E5" size="large" />
                 ) : (
                   <View style={styles.shutterInner}>
-                    <Text style={styles.shutterCameraIcon}>📸</Text>
+                    <Text style={styles.shutterIcon}>📸</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -250,6 +382,48 @@ export default function CameraProofScreen({ route, navigation }) {
           </SafeAreaView>
         </View>
       )}
+
+      {/* Gemini API Anahtarı Ayar Modalı */}
+      <Modal
+        visible={showApiKeyModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowApiKeyModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>🔑 Gemini Vision API Anahtarı</Text>
+            <Text style={styles.modalSubtitle}>
+              Google AI Studio'dan aldığınız ücretsiz Gemini API anahtarını girerek gerçek yapay zekâ görüntü analizini aktifleştirebilirsiniz.
+            </Text>
+
+            <TextInput
+              style={styles.modalInput}
+              placeholder="AIzaSy..."
+              placeholderTextColor="#94A3B8"
+              value={inputApiKey}
+              onChangeText={setInputApiKey}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setShowApiKeyModal(false)}
+              >
+                <Text style={styles.modalCancelText}>Vazgeç</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalSaveBtn}
+                onPress={handleSaveApiKey}
+              >
+                <Text style={styles.modalSaveText}>Kaydet</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -258,6 +432,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000000',
+    width: '100%',
+    height: '100%',
   },
   centerContainer: {
     flex: 1,
@@ -267,9 +443,9 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 16,
+    fontSize: 15,
     color: '#475569',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   permissionContainer: {
     flex: 1,
@@ -335,12 +511,39 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  cameraWrapper: {
+  cameraContainer: {
     flex: 1,
+    width: '100%',
+    height: '100%',
     backgroundColor: '#000000',
   },
-  cameraOverlay: {
+  cameraView: {
     flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  errorBanner: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    padding: 10,
+    borderRadius: 8,
+    zIndex: 10,
+  },
+  errorBannerText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  cameraOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'space-between',
   },
   topBar: {
@@ -350,8 +553,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
   },
+  topRightActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   topBtn: {
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
@@ -363,6 +570,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
+  keyBtn: {
+    backgroundColor: 'rgba(79, 70, 229, 0.85)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#818CF8',
+  },
+  keyBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 12,
+  },
   guideBadge: {
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
     paddingHorizontal: 14,
@@ -371,7 +591,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.15)',
   },
-  guideText: {
+  guideBadgeText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
@@ -384,22 +604,23 @@ const styles = StyleSheet.create({
     width: 250,
     height: 250,
     borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.75)',
+    borderColor: 'rgba(255, 255, 255, 0.8)',
     borderRadius: 24,
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    paddingBottom: 16,
+    paddingBottom: 14,
     backgroundColor: 'rgba(0, 0, 0, 0.05)',
   },
   frameHint: {
-    color: 'rgba(255, 255, 255, 0.85)',
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    paddingHorizontal: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 10,
+    textAlign: 'center',
   },
   bottomBar: {
     alignItems: 'center',
@@ -420,10 +641,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 6,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
     elevation: 8,
   },
   shutterInner: {
@@ -434,7 +651,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  shutterCameraIcon: {
+  shutterIcon: {
     fontSize: 28,
   },
   shutterLabel: {
@@ -456,23 +673,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
   },
-  previewOverlayHeader: {
+  previewHeader: {
     backgroundColor: 'rgba(15, 23, 42, 0.88)',
     padding: 16,
     borderRadius: 16,
     marginTop: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(255, 255, 255, 0.15)',
   },
-  previewHeaderTitle: {
+  previewTitle: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
-  previewHeaderSubtitle: {
+  previewSubtitle: {
     color: '#CBD5E1',
     fontSize: 13,
     marginTop: 4,
+    lineHeight: 18,
   },
   previewActions: {
     flexDirection: 'row',
@@ -492,15 +710,76 @@ const styles = StyleSheet.create({
   },
   retakeBtnText: {
     color: '#0F172A',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
-  confirmBtn: {
+  verifyBtn: {
     backgroundColor: '#10B981',
   },
-  confirmBtnText: {
+  verifyBtnText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  analyzingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  modalInput: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+    marginBottom: 18,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  modalCancelText: {
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  modalSaveBtn: {
+    backgroundColor: '#4F46E5',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+  },
+  modalSaveText: {
+    color: '#FFFFFF',
     fontWeight: '700',
   },
 });

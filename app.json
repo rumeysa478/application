@@ -17,6 +17,14 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       }
     },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Habitime, alışkanlık kanıt fotoğraflarınızı analiz etmek için kameraya erişim izni gerektirir."
+        }
+      ]
+    ],
     "web": {
       "favicon": "./assets/favicon.png"
     }

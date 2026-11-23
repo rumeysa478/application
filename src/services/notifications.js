@@ -58,11 +58,12 @@ export const requestNotificationPermissions = async () => {
 export const scheduleHabitNotification = async (habit, customSeconds = null) => {
   const fact = getRandomFact();
   const seconds = customSeconds || Math.max(60, Number(habit.intervalMinutes || 60) * 60);
+  const targetText = habit.dailyTargetLiters ? ` (Bugün: ${habit.todayIntakeLiters || 0}/${habit.dailyTargetLiters} L)` : '';
 
   const identifier = await Notifications.scheduleNotificationAsync({
     content: {
       title: `${habit.title} Vakti! • Biliyor muydunuz?`,
-      body: `"${fact.fact}"\n\n📌 Habitime: Görevini tamamla veya ertele.`,
+      body: `"${fact.fact}"\n\n💧 Bir bardak su iç ve kamerayla doğrula!${targetText}`,
       data: {
         habitId: habit.id,
         factId: fact.id,

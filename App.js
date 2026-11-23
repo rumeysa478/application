@@ -6,6 +6,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import HomeScreen from './src/screens/HomeScreen';
 import AddHabitScreen from './src/screens/AddHabitScreen';
+import EditHabitScreen from './src/screens/EditHabitScreen';
 import CameraProofScreen from './src/screens/CameraProofScreen';
 
 const Stack = createNativeStackNavigator();
@@ -44,6 +45,14 @@ export default function App() {
             component={AddHabitScreen}
             options={{
               title: 'Yeni Alışkanlık Ekle',
+              headerBackTitle: 'Geri',
+            }}
+          />
+          <Stack.Screen
+            name="EditHabit"
+            component={EditHabitScreen}
+            options={{
+              title: 'Alışkanlığı Düzenle',
               headerBackTitle: 'Geri',
             }}
           />
