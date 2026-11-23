@@ -9,6 +9,7 @@ import {
   Alert,
   Modal,
   TextInput,
+  ScrollView,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -29,9 +30,12 @@ import {
   stopVibration,
 } from '../services/vibration';
 import { getStoredApiKey, setStoredApiKey, testApiKey } from '../services/visionAi';
+import { getUserProfile } from '../services/userService';
+import LivingWidget from '../components/LivingWidget';
 
 export default function HomeScreen({ navigation }) {
   const [habits, setHabits] = useState([]);
+  const [profile, setProfile] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeAlertHabit, setActiveAlertHabit] = useState(null);
 
@@ -75,31 +79,34 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  // Ekran her odaklandığında listeyi güncelle
-  const loadHabits = useCallback(async () => {
+  // Ekran her odaklandığında listeyi ve profili güncelle
+  const loadData = useCallback(async () => {
     try {
-      const data = await getHabits();
-      setHabits(data);
+      const [habitsData, profileData] = await Promise.all([
+        getHabits(),
+        getUserProfile(),
+      ]);
+      setHabits(habitsData);
+      setProfile(profileData);
     } catch (error) {
-      console.error('Alışkanlıklar yüklenemedi:', error);
+      console.error('Veriler yüklenemedi:', error);
     }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
-      loadHabits();
-    }, [loadHabits])
+      loadData();
+    }, [loadData])
   );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadHabits();
+    await loadData();
     setRefreshing(false);
   };
 
   // Erteleme (Snooze) Mantığı (Maksimum 3 kez)
   const handleSnooze = async (item) => {
-    // Uyku saatinde ise uyar
     if (!isWithinActiveHours(item)) {
       Alert.alert(
         '💤 Uyku Modu',
@@ -114,7 +121,7 @@ export default function HomeScreen({ navigation }) {
       try {
         const updated = await snoozeHabit(item.id);
         const { fact } = await scheduleSnoozeNotification(item, 30);
-        await loadHabits();
+        await loadData();
 
         const remaining = 3 - (updated ? updated.snoozeCount : currentSnooze + 1);
 
@@ -148,7 +155,7 @@ export default function HomeScreen({ navigation }) {
     );
   };
 
-  // Kamera Kanıt Ekranına Yönlendirme
+  // Kamera Kanıt Ekranına Yönlendirme (Her an ek kanıt yükleme)
   const handleOpenProofCamera = (item) => {
     stopVibration();
     if (activeAlertHabit && activeAlertHabit.id === item.id) {
@@ -159,6 +166,20 @@ export default function HomeScreen({ navigation }) {
       habitTitle: item.title,
       portionLiters: item.portionLiters || 0.25,
     });
+  };
+
+  // Hızlı Kanıt Yükleme Eylemi (Doğrudan ana ekrandan)
+  const handleQuickProof = () => {
+    const targetHabit = habits.find((h) => h.dailyTargetLiters) || habits[0];
+    if (targetHabit) {
+      handleOpenProofCamera(targetHabit);
+    } else {
+      Alert.alert(
+        'Alışkanlık Bulunamadı',
+        'Öncelikle su hedefinizi belirlemek için yeni bir alışkanlık oluşturun.',
+        [{ text: 'Yeni Ekle', onPress: () => navigation.navigate('AddHabit') }]
+      );
+    }
   };
 
   // Alışkanlık Düzenleme Ekranına Yönlendirme
@@ -178,7 +199,7 @@ export default function HomeScreen({ navigation }) {
           style: 'destructive',
           onPress: async () => {
             await resetHabit(item.id);
-            await loadHabits();
+            await loadData();
           },
         },
       ]
@@ -234,7 +255,6 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  // Bugünün çalışma saatini metin olarak al
   const getTodayHoursText = (item) => {
     if (!item?.daysConfig) return '09:00 - 23:00';
     const dayKey = DAY_KEYS[new Date().getDay()];
@@ -249,22 +269,18 @@ export default function HomeScreen({ navigation }) {
     const remainingSnooze = Math.max(0, maxSnooze - currentSnooze);
     const isAlertActive = activeAlertHabit && activeAlertHabit.id === item.id;
 
-    // Su İlerleme Hesaplaması
     const targetLiters = Number(item.dailyTargetLiters) || 2.5;
     const currentIntake = Number(item.todayIntakeLiters || 0);
     const percentage = Math.min(100, Math.round((currentIntake / targetLiters) * 100));
     const isGoalCompleted = currentIntake >= targetLiters;
-
-    // Çalışma saati kontrolü
     const isWorkingHours = isWithinActiveHours(item);
 
-    // Erteleme durumuna göre rozet rengi
     const snoozeBadgeColor =
       remainingSnooze === 0
-        ? '#EF4444' // Kırmızı
+        ? '#EF4444'
         : remainingSnooze === 1
-        ? '#F59E0B' // Turuncu
-        : '#10B981'; // Yeşil
+        ? '#F59E0B'
+        : '#10B981';
 
     return (
       <View style={[styles.card, isAlertActive && styles.cardInAlert]}>
@@ -327,7 +343,6 @@ export default function HomeScreen({ navigation }) {
 
         {/* Bilgilendirme Rozetleri */}
         <View style={styles.badgesRow}>
-          {/* Çalışma Saati Rozeti */}
           <View
             style={[
               styles.badge,
@@ -348,7 +363,6 @@ export default function HomeScreen({ navigation }) {
             </Text>
           </View>
 
-          {/* Erteleme Rozeti */}
           {!isGoalCompleted && (
             <View
               style={[
@@ -365,7 +379,6 @@ export default function HomeScreen({ navigation }) {
             </View>
           )}
 
-          {/* Hedef Tamamlandı Rozeti */}
           {isGoalCompleted && (
             <View style={[styles.badge, styles.completedBadge]}>
               <Text style={styles.completedBadgeText}>
@@ -374,7 +387,6 @@ export default function HomeScreen({ navigation }) {
             </View>
           )}
 
-          {/* Son Doğrulama Saati */}
           {item.lastProofAt && (
             <View style={[styles.badge, styles.timeBadge]}>
               <Text style={styles.timeBadgeText}>
@@ -383,7 +395,6 @@ export default function HomeScreen({ navigation }) {
             </View>
           )}
 
-          {/* Zorunlu Mod Rozeti */}
           {isAlertActive && (
             <View style={[styles.badge, styles.alertBadge]}>
               <Text style={styles.alertBadgeText}>🚨 ZORUNLU MOD AKTİF</Text>
@@ -391,19 +402,29 @@ export default function HomeScreen({ navigation }) {
           )}
         </View>
 
-        {/* Aksiyon Butonları */}
-        {isGoalCompleted ? (
-          <View style={styles.completedActionsRow}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.kanitlaButton]}
-              activeOpacity={0.8}
-              onPress={() => handleOpenProofCamera(item)}
-            >
-              <Text style={styles.kanitlaButtonText}>
-                📸 Ekstra Su Ekle (+{Math.round((item.portionLiters || 0.25) * 1000)}ml)
-              </Text>
-            </TouchableOpacity>
+        {/* Aksiyon Butonları (Her an ek kanıt yükleme aktif) */}
+        <View style={styles.actionButtonsRow}>
+          {/* Her An Kanıt Ekle Butonu */}
+          <TouchableOpacity
+            style={[
+              styles.actionButton,
+              styles.kanitlaButton,
+              isAlertActive && styles.kanitlaAlertButton,
+            ]}
+            activeOpacity={0.7}
+            onPress={() => handleOpenProofCamera(item)}
+          >
+            <Text style={styles.kanitlaButtonText}>
+              {isAlertActive
+                ? '📸 Sustur & Fotoğraf Çek'
+                : isGoalCompleted
+                ? `📸 Ekstra Su Ekle (+${Math.round((item.portionLiters || 0.25) * 1000)}ml)`
+                : `📸 Kanıt Ekle (+${Math.round((item.portionLiters || 0.25) * 1000)}ml)`}
+            </Text>
+          </TouchableOpacity>
 
+          {/* Erteleme Butonu veya Sıfırla */}
+          {isGoalCompleted ? (
             <TouchableOpacity
               style={styles.resetSmallButton}
               activeOpacity={0.8}
@@ -411,27 +432,7 @@ export default function HomeScreen({ navigation }) {
             >
               <Text style={styles.resetSmallButtonText}>🔄 Sıfırla</Text>
             </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.actionButtonsRow}>
-            {/* Kanıtla Butonu -> Kamera Ekranını Açar */}
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                styles.kanitlaButton,
-                isAlertActive && styles.kanitlaAlertButton,
-              ]}
-              activeOpacity={0.7}
-              onPress={() => handleOpenProofCamera(item)}
-            >
-              <Text style={styles.kanitlaButtonText}>
-                {isAlertActive
-                  ? '📸 Sustur & Fotoğraf Çek'
-                  : `📸 Kanıtla (+${Math.round((item.portionLiters || 0.25) * 1000)}ml)`}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Ertele Butonu */}
+          ) : (
             <TouchableOpacity
               style={[
                 styles.actionButton,
@@ -451,14 +452,49 @@ export default function HomeScreen({ navigation }) {
                 {remainingSnooze === 0 ? '🚨 Hak Bitti' : '⏳ Ertele (30 dk)'}
               </Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
+        </View>
       </View>
     );
   };
 
   return (
     <View style={styles.container}>
+      {/* Üst Sosyal & Profil Çubuğu */}
+      <View style={styles.topProfileBar}>
+        <View style={styles.profileInfoGroup}>
+          <Text style={styles.profileAvatar}>{profile?.avatar || '🌟'}</Text>
+          <View>
+            <Text style={styles.profileUsername}>{profile?.username || 'Habitime'}</Text>
+            <View style={styles.scoreRow}>
+              <Text style={styles.scorePillText}>🪙 {profile?.totalScore || 0} Puan</Text>
+              {profile?.isDoublePointsActiveToday && (
+                <View style={styles.multiplierBadge}>
+                  <Text style={styles.multiplierText}>🔥 2x</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        </View>
+
+        {/* Üst Navigasyon Butonları */}
+        <View style={styles.navButtonsRow}>
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => navigation.navigate('Leaderboard')}
+          >
+            <Text style={styles.navButtonText}>🏆 Yarışma</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.navButton, styles.navButtonStore]}
+            onPress={() => navigation.navigate('WidgetShop')}
+          >
+            <Text style={[styles.navButtonText, styles.navButtonStoreText]}>🪴 Pazar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {/* Aktif Titreşim / Zorunlu Mod Üst Bildirim Şeridi */}
       {activeAlertHabit && (
         <View style={styles.alertBanner}>
@@ -479,32 +515,37 @@ export default function HomeScreen({ navigation }) {
         </View>
       )}
 
-      {/* Test ve Hızlı Eylem Çubuğu */}
+      {/* Yaşayan Maskot Widget'ı */}
+      <LivingWidget
+        activeWidgetId={profile?.activeWidgetId || 'flower_tier_1'}
+        healthPercent={profile?.widgetHealth || 45}
+        onOpenShop={() => navigation.navigate('WidgetShop')}
+        onQuickWater={handleQuickProof}
+      />
+
+      {/* Her An Hızlı Kanıt Ekleme & Test Çubuğu */}
       <View style={styles.quickBar}>
+        <TouchableOpacity
+          style={styles.instantProofButton}
+          onPress={handleQuickProof}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.instantProofText}>💧 Her An Kanıt Ekle (+250ml)</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.quickButton}
           onPress={handleTestNotification}
         >
-          <Text style={styles.quickButtonText}>🔔 Bildirim Testi</Text>
+          <Text style={styles.quickButtonText}>🔔 Bildirim</Text>
         </TouchableOpacity>
-
-        {habits.length > 0 && !activeAlertHabit && (
-          <TouchableOpacity
-            style={[styles.quickButton, styles.quickButtonDanger]}
-            onPress={() => triggerZorunluMod(habits[0])}
-          >
-            <Text style={[styles.quickButtonText, styles.quickButtonDangerText]}>
-              🚨 Alarm Testi
-            </Text>
-          </TouchableOpacity>
-        )}
 
         <TouchableOpacity
           style={[styles.quickButton, styles.quickButtonAi]}
           onPress={() => setShowApiKeyModal(true)}
         >
           <Text style={[styles.quickButtonText, styles.quickButtonAiText]}>
-            🔑 AI Anahtarı
+            🔑 AI
           </Text>
         </TouchableOpacity>
       </View>
@@ -572,11 +613,7 @@ export default function HomeScreen({ navigation }) {
                 onPress={handleTestKey}
                 disabled={isTestingKey}
               >
-                {isTestingKey ? (
-                  <ActivityIndicator size="small" color="#4F46E5" />
-                ) : (
-                  <Text style={styles.modalTestText}>⚡ Test Et</Text>
-                )}
+                <Text style={styles.modalTestText}>⚡ Test Et</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -603,6 +640,75 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+  },
+  topProfileBar: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  profileInfoGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  profileAvatar: {
+    fontSize: 28,
+  },
+  profileUsername: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  scorePillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  multiplierBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  multiplierText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  navButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  navButton: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  navButtonText: {
+    color: '#4338CA',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  navButtonStore: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  navButtonStoreText: {
+    color: '#15803D',
   },
   alertBanner: {
     backgroundColor: '#EF4444',
@@ -641,17 +747,33 @@ const styles = StyleSheet.create({
   quickBar: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 4,
+    paddingTop: 8,
+    paddingBottom: 6,
     gap: 8,
+  },
+  instantProofButton: {
+    flex: 2,
+    backgroundColor: '#4F46E5',
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+  },
+  instantProofText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
   },
   quickButton: {
     flex: 1,
     backgroundColor: '#EEF2FF',
-    paddingVertical: 8,
+    paddingVertical: 9,
     paddingHorizontal: 8,
     borderRadius: 10,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#C7D2FE',
   },
@@ -659,13 +781,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#4338CA',
-  },
-  quickButtonDanger: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-  },
-  quickButtonDangerText: {
-    color: '#B91C1C',
   },
   quickButtonAi: {
     backgroundColor: '#F0FDF4',
@@ -825,11 +940,6 @@ const styles = StyleSheet.create({
   actionButtonsRow: {
     flexDirection: 'row',
     gap: 8,
-  },
-  completedActionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
   },
   actionButton: {
     flex: 1,

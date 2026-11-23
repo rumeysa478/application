@@ -8,6 +8,8 @@ import HomeScreen from './src/screens/HomeScreen';
 import AddHabitScreen from './src/screens/AddHabitScreen';
 import EditHabitScreen from './src/screens/EditHabitScreen';
 import CameraProofScreen from './src/screens/CameraProofScreen';
+import LeaderboardScreen from './src/screens/LeaderboardScreen';
+import WidgetShopScreen from './src/screens/WidgetShopScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -53,6 +55,22 @@ export default function App() {
             component={EditHabitScreen}
             options={{
               title: 'Alışkanlığı Düzenle',
+              headerBackTitle: 'Geri',
+            }}
+          />
+          <Stack.Screen
+            name="Leaderboard"
+            component={LeaderboardScreen}
+            options={{
+              title: '🏆 Günlük Yarışma & Skor',
+              headerBackTitle: 'Geri',
+            }}
+          />
+          <Stack.Screen
+            name="WidgetShop"
+            component={WidgetShopScreen}
+            options={{
+              title: '🪴 Yaşayan Maskot Pazarı',
               headerBackTitle: 'Geri',
             }}
           />

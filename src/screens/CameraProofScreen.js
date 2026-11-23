@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { recordWaterIntakeProof } from '../services/storage';
 import { stopVibration } from '../services/vibration';
+import { addScore } from '../services/userService';
 import {
   analyzeImageForWaterContainer,
   getStoredApiKey,
@@ -248,10 +249,17 @@ export default function CameraProofScreen({ route, navigation }) {
     }
   };
 
-  // Su tüketimini kaydet ve ekranı kapat
+  // Su tüketimini kaydet, puan ver ve ekranı kapat
   const finalizeIntake = async (amount, detectedName = null) => {
     stopVibration();
     const result = await recordWaterIntakeProof(habitId, amount);
+
+    // Puan ödülü (Temel 50 puan, hedef bittiğinde ekstra 100 puan)
+    let baseAward = 50;
+    if (result.goalReached) {
+      baseAward += 100;
+    }
+    const scoreResult = await addScore(baseAward, 'Su Kanıtı Doğrulandı');
 
     // Geçici fotoğrafı temizle
     setPhoto(null);
@@ -260,17 +268,22 @@ export default function CameraProofScreen({ route, navigation }) {
     const totalIntake = result.habit.todayIntakeLiters;
     const target = result.habit.dailyTargetLiters;
 
+    const pointsMsg =
+      scoreResult.multiplier > 1
+        ? `🪙 +${scoreResult.earnedPoints} Puan Kazandınız! (🔥 2x Bonusuyla ${scoreResult.basePoints}x2)`
+        : `🪙 +${scoreResult.earnedPoints} Puan Kazandınız!`;
+
     if (result.goalReached) {
       Alert.alert(
-        '🎉 TEBRİKLER! GÜNLÜK HEDEF TAMAMLANDI!',
-        `Su kabı doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml eklendi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n\nBugünün su hedefini başarıyla tamamladınız!`,
+        '🎉 GÜNLÜK HEDEF TAMAMLANDI!',
+        `Su kabı doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml eklendi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n\n${pointsMsg}\n🌱 Maskotunuz büyüdü ve gelişti!`,
         [{ text: 'Harika!', onPress: () => navigation.goBack() }]
       );
     } else {
       const remaining = (target - totalIntake).toFixed(2);
       Alert.alert(
-        '✅ Su Tüketimi Onaylandı!',
-        `Su kabı başarıyla doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml kaydedildi.\nBugünkü toplam: ${totalIntake} L / ${target} L\n(Hedefe kalan: ${remaining} L)`,
+        '✅ Kanıt Doğrulandı!',
+        `Su kabı başarıyla doğrulandı${detectedName ? ` (${detectedName})` : ''}!\n\n+${amountMl} ml kaydedildi.\nBugünkü toplam: ${totalIntake} L / ${target} L (Kalan: ${remaining} L)\n\n${pointsMsg}\n🌱 Maskotunuz sulandı!`,
         [{ text: 'Tamam', onPress: () => navigation.goBack() }]
       );
     }
