@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../db');
 const { authenticateToken, JWT_SECRET } = require('../middleware/auth');
+const { authLimiter, validateRegisterInput, validateLoginInput } = require('../middleware/security');
 
 const router = express.Router();
 
@@ -17,23 +18,17 @@ const calculateRecommendedWater = (weightKg) => {
 
 /**
  * POST /api/auth/register
- * Kullanıcı kaydı oluşturur. Yaş, boy, kilo opsiyoneldir.
+ * Kullanıcı kaydı oluşturur.
+ * Güvenlik: authLimiter + validateRegisterInput
  */
-router.post('/register', async (req, res) => {
+router.post('/register', authLimiter, validateRegisterInput, async (req, res) => {
   try {
     const { username, email, password, age, heightCm, weightKg } = req.body;
-
-    if (!username || !email || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Kullanıcı adı, e-posta ve parola zorunludur.',
-      });
-    }
 
     if (!prisma) {
       return res.status(503).json({
         success: false,
-        error: 'Veritabanı bağlantısı henüz hazır değil. Lütfen yerel modda devam edin.',
+        error: 'Veritabanı bağlantısı henüz hazır değil.',
       });
     }
 
@@ -50,7 +45,7 @@ router.post('/register', async (req, res) => {
     if (existing) {
       return res.status(409).json({
         success: false,
-        error: 'Bu kullanıcı adı veya e-posta adresi zaten kayıtlı.',
+        error: 'Bu kullanıcı adı veya e-posta adresi zaten kullanımda.',
       });
     }
 
@@ -100,7 +95,7 @@ router.post('/register', async (req, res) => {
     console.error('Kayıt hatası:', error);
     res.status(500).json({
       success: false,
-      error: 'Kayıt sırasında bir sunucu hatası oluştu: ' + error.message,
+      error: 'Kayıt sırasında bir hata oluştu: ' + error.message,
     });
   }
 });
@@ -108,26 +103,20 @@ router.post('/register', async (req, res) => {
 /**
  * POST /api/auth/login
  * Kullanıcı girişi ve JWT token üretimi
+ * Güvenlik: authLimiter + validateLoginInput
  */
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, validateLoginInput, async (req, res) => {
   try {
-    const { emailOrUsername, password } = req.body;
-
-    if (!emailOrUsername || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Kullanıcı adı/e-posta ve parola gereklidir.',
-      });
-    }
+    const { login, password } = req.body;
 
     if (!prisma) {
       return res.status(503).json({
         success: false,
-        error: 'Veritabanı bağlantısı henüz hazır değil. Lütfen yerel modda devam edin.',
+        error: 'Veritabanı bağlantısı henüz hazır değil.',
       });
     }
 
-    const cleanInput = emailOrUsername.trim();
+    const cleanInput = login.trim();
     const user = await prisma.user.findFirst({
       where: {
         OR: [
@@ -140,7 +129,7 @@ router.post('/login', async (req, res) => {
     if (!user) {
       return res.status(401).json({
         success: false,
-        error: 'Kullanıcı bulunamadı veya parola hatalı.',
+        error: 'Kullanıcı adı/e-posta veya parola hatalı.',
       });
     }
 
@@ -148,7 +137,7 @@ router.post('/login', async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({
         success: false,
-        error: 'Kullanıcı bulunamadı veya parola hatalı.',
+        error: 'Kullanıcı adı/e-posta veya parola hatalı.',
       });
     }
 
@@ -170,7 +159,7 @@ router.post('/login', async (req, res) => {
     console.error('Giriş hatası:', error);
     res.status(500).json({
       success: false,
-      error: 'Giriş sırasında sunucu hatası oluştu: ' + error.message,
+      error: 'Giriş sırasında bir hata oluştu: ' + error.message,
     });
   }
 });

@@ -1,15 +1,17 @@
 {
   "name": "habitime-backend",
   "version": "1.0.0",
-  "description": "Habitime PostgreSQL + Prisma ORM + Express Backend API",
+  "description": "Habitime Secure Backend API (SQLite Zero-Config Dev & PostgreSQL Production)",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "db:push": "prisma db push",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "test": "node src/test-api.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -17,6 +19,8 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {

@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { authenticateToken } = require('../middleware/auth');
+const { transferLimiter } = require('../middleware/security');
 
 const router = express.Router();
 
@@ -134,7 +135,7 @@ router.post('/connect', authenticateToken, async (req, res) => {
  * POST /api/friends/transfer-points
  * Bir arkadaşa puan transferi gerçekleştirir
  */
-router.post('/transfer-points', authenticateToken, async (req, res) => {
+router.post('/transfer-points', authenticateToken, transferLimiter, async (req, res) => {
   try {
     if (!prisma) {
       return res.status(503).json({ success: false, error: 'Veritabanı hazır değil.' });
